@@ -100,6 +100,23 @@ Each 30k-step run is ~12 minutes on an RTX 3060 Ti (50k ≈ 19 min,
 in the writeup (a header note there maps the original monorepo commands
 onto this repo's layout).
 
+### On a cloud GPU (SkyPilot)
+
+No local GPU? [`skypilot/reproduce.yaml`](skypilot/reproduce.yaml) runs
+the same reproduction on any cloud
+[SkyPilot](https://docs.skypilot.co) supports:
+
+```bash
+sky launch skypilot/reproduce.yaml --infra <your-cloud> --down -y
+# or a single run:
+sky launch skypilot/reproduce.yaml --infra <your-cloud> --down -y \
+  --env RUN_CMD="uv run python -m grok_lens.train --total-steps 50000 --seed 42 --no-wandb"
+```
+
+The full core reproduction is roughly a GPU-day on an 8 GB card —
+typically a few dollars on spot instances. Pass `--secret WANDB_API_KEY`
+to log to your own wandb.
+
 ## Provenance
 
 This repo is extracted from a private research monorepo where the runs

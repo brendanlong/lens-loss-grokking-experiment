@@ -1,0 +1,36 @@
+# Reproduce the experiments on a cloud GPU with SkyPilot
+# (https://docs.skypilot.co). Any ~8 GB Ampere-or-newer card is plenty —
+# everything in the writeup was trained on a single RTX 3060 Ti.
+#
+#   # Full training reproduction (core arms; ~a GPU-day for everything):
+#   sky launch skypilot/reproduce.yaml --infra <your-cloud> --down -y
+#
+#   # A single run instead of the script:
+#   sky launch skypilot/reproduce.yaml --infra <your-cloud> --down -y \
+#     --env RUN_CMD="uv run python -m grok_lens.train --total-steps 50000 --seed 42 --no-wandb"
+#
+#   # Optional: log to your own wandb
+#   sky launch ... --secret WANDB_API_KEY
+#
+# The analyses (scripts/reproduce_analyses.sh) need no GPU — run those
+# locally; checkpoints download from the public HF dataset.
+
+resources:
+  accelerators: {RTX3060: 1, RTX3090: 1, RTX4090: 1, A10G: 1, L4: 1, T4: 1}
+  any_of:
+    - use_spot: true
+    - use_spot: false
+  disk_size: 30
+
+workdir: .
+
+setup: |
+  pip install uv -q
+  uv sync
+
+run: |
+  ${RUN_CMD:-bash scripts/reproduce_training.sh}
+
+envs:
+  RUN_CMD: ""
+  WANDB_API_KEY: ""
