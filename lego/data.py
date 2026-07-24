@@ -96,7 +96,7 @@ class S3StreamingDataset(SyntheticStream[dict[str, Tensor]]):
     """Streaming dataset generating fresh group composition examples on the fly.
 
     Worker sharding/seeding and the per-epoch seed mixing are handled by
-    :class:`shared.streaming.SyntheticStream`.
+    :class:`common.streaming.SyntheticStream`.
     """
 
     def __init__(

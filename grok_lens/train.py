@@ -331,7 +331,7 @@ def main() -> None:
         from common.checkpoint import resolve_checkpoint
 
         ckpt_path = resolve_checkpoint(
-            args.resume_from, Path("data/grok_lens/s3_cache")
+            args.resume_from, Path("data/hf_cache")
         )
         ckpt = torch.load(ckpt_path, weights_only=True, map_location="cpu")
         model_config = GrokModelConfig(

@@ -22,12 +22,11 @@ class BaseTrainingConfig(BaseModel):
     total_steps: int = 2000
     max_grad_norm: float = 1.0
 
-    # Logging / eval cadence (see shared.schedule for drift-free firing)
+    # Logging / eval cadence (see common.schedule for drift-free firing)
     log_every_steps: int = 100
     eval_every_steps: int = 500
 
     # Checkpointing
-    save_checkpoint: bool = False
     checkpoint_dir: str = "data/checkpoints"
 
     # Wandb
