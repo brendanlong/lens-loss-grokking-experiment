@@ -951,3 +951,66 @@ replicates the complete story**: baseline instability + post-grok
 sparsification + causal brittleness (3/3) and the aux
 stabilization-with-arrested-pruning phenotype (3/3, at higher
 first-arrival cost).
+
+### 2026-07-27 — Review re-runs I: no-LN control, torch.optim.Muon swap, 500k long-horizon
+
+Post-release review batch, run from this repo on the local SkyPilot
+cluster via a thin queue wrapper around `skypilot/reproduce.yaml`'s
+setup (one job per run; each job trains, logs to wandb, and syncs
+`final.pt` + `train.log` to the private S3 mirror; curated checkpoints
+land on the HF dataset). Commands per cell (seeds 42/43/44):
+
+```
+uv run python -m grok_lens.train --wandb-run-name <run> \
+  --checkpoint-dir data/grok_lens/checkpoints/<run> --log-fourier \
+  [--no-layernorm | --optimizer muon [--n-layers 3] | --total-steps 500000] \
+  [--aux-lambda 0.3] --seed <s> --total-steps 50000
+```
+
+**No-LN control (`*-noln-50k`, reviewer question: is the instability
+LN-dependent?): YES — the headline instability requires LayerNorm.**
+
+| cell (50k) | first grok | dips <0.90 | occupancy | top-6 power | knockout (worst single / top-6) |
+|---|---|---|---|---|---|
+| LN baseline (ref) | 7.6–7.9k | 33–55 | 0.86–0.90 | ~0.9 | −90pts / chance |
+| **no-LN baseline** | 7.7–14.1k | **1–4** | **0.99** | 0.95–0.97 | 0.10–0.23 acc / 0.008–0.011 |
+
+No-LN baselines end *sparser* and just as ablation-brittle, yet train
+stably — so static brittleness ≠ training instability; the churn that
+topples the sparse circuit is LN-mediated. Consistent with the
+scale-invariance literature (van Laarhoven 2017; Zhang et al. 2019;
+Li & Arora 2020; Lobacheva et al. 2021 periodic destabilization): wd
+shrinks norms of LN-invariant weights, effective LR grows, and
+post-grok (near-zero gradients) nothing opposes the decay. Nanda et
+al.'s architecture is LN-free — this, rather than budget censoring, is
+the clean explanation for why the literature didn't report the
+sawtooth. Writeup rescoped accordingly: the instability claim is about
+LN networks under the canonical recipe; the aux loss stabilizes from
+the circuit side.
+
+**torch.optim.Muon re-runs (`*-torchmuon-50k`, 12 runs): the hand-rolled
+Muon arm replicates cell-for-cell on the stock optimizer** (torch 2.13's
+`torch.optim.Muon`; `muon.py` is now only the parameter split). These
+runs supersede the `*-muon-50k` arm as canonical.
+
+| cell (50k) | first grok | dips <0.90 | occupancy | (hand-rolled ref) |
+|---|---|---|---|---|
+| L2 base | 3.3–3.5k | 39–48 | 0.89–0.91 | 41–50 / 0.88–0.90 |
+| L2 λ0.3 | 8.2–9.9k | 3–5 | 0.98–0.99 | 0–5 / 0.98–1.00 |
+| L3 base | 3.3–3.6k | 7–17 | 0.95–0.98 | 6–14 / 0.96–0.98 |
+| L3 λ0.3 | 7.8–9.2k | 11–15 | 0.96 | 11–14 / 0.95–0.96 |
+
+The L3-aux-Muon no-benefit anomaly reproduces exactly.
+
+**500k long-horizon (`*-s42-500k`, both arms): the asymmetry grows with
+budget.** Baseline: 32 dips, occupancy 0.92, "stable" only at 499k
+(right-censored — tail-5k 0.90, still dipping at the end of half a
+million steps). Aux λ0.3: **0 dips over 500k**, occupancy 1.00,
+permanently ≥0.95 from ~255k; its shallow sub-0.95 wobbles all predate
+255k and never approach 0.90. "Near-absorbing" was an understatement.
+
+Provenance notes: job 119 (noln s42) shows FAILED in the queue — an
+S3-credentials issue in the sync trap after training completed; its
+checkpoint was recovered manually and verified. A tmux-launched
+duplicate of the same run (killed mid-flight at 43k when the queue
+moved to SkyPilot) is renamed `*-aborted-tmux` in wandb.
