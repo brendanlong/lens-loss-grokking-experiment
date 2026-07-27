@@ -61,7 +61,7 @@ Requires Python ≥ 3.12 and [uv](https://docs.astral.sh/uv/):
 
 ```bash
 uv sync
-uv run pytest   # 146 CPU tests, ~5 s
+uv run pytest   # 79 CPU tests, ~5 s
 ```
 
 A GPU is optional for the analyses (checkpoints are downloaded) and

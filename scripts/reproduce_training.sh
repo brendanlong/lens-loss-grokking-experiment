@@ -27,6 +27,9 @@ for s in 42 43 44; do train "p113-L2-lam0.3-uniform-frac0.3-s${s}" --aux-lambda 
 # for s in 42 43 44; do train "p113-L3-lam0.3-uniform-frac0.3-s${s}" --n-layers 3 --aux-lambda 0.3 --seed $s; done
 # for s in 42 43 44; do train "p113-L3-lam0.3-linear-frac0.3-s${s}" --n-layers 3 --aux-lambda 0.3 --aux-weighting linear --seed $s; done
 # for s in 42 43 44; do train "p113-L2-lam0.0-uniform-frac0.3-s${s}-muon-50k" --optimizer muon --seed $s --total-steps 50000; done
+# for s in 42 43 44; do train "p113-L2-lam0.3-uniform-frac0.3-s${s}-muon-50k" --optimizer muon --aux-lambda 0.3 --seed $s --total-steps 50000; done
+# for s in 42 43 44; do train "p113-L3-lam0.0-uniform-frac0.3-s${s}-muon-50k" --optimizer muon --n-layers 3 --seed $s --total-steps 50000; done
+# for s in 42 43 44; do train "p113-L3-lam0.3-uniform-frac0.3-s${s}-muon-50k" --optimizer muon --n-layers 3 --aux-lambda 0.3 --seed $s --total-steps 50000; done
 
 # --- Controls: wd sweep, shuffled targets, wd=0 ---
 # for wd in 0.25 0.5; do for s in 42 43 44; do train "p113-L2-lam0.0-uniform-frac0.3-s${s}-wd${wd}-50k" --weight-decay $wd --seed $s --total-steps 50000 --log-fourier; done; done
@@ -40,9 +43,13 @@ for s in 42 43 44; do train "p113-L2-lam0.3-uniform-frac0.3-s${s}" --aux-lambda 
 # --- Objective-switching continuations (from your own trained checkpoints, or hf: paths) ---
 # train "p113-L2-cont-auxoff-from-lam0.3-s42" --resume-from "hf:grok_lens/p113-L2-lam0.3-uniform-frac0.3-s42/final.pt" --aux-lambda 0 --seed 42
 # train "p113-L2-cont-rescue-from-base-s42" --resume-from "hf:grok_lens/p113-L2-lam0.0-uniform-frac0.3-s42-50k/final.pt" --aux-lambda 0.3 --seed 42
+# controls (same source, objective unchanged):
+# train "p113-L2-cont-auxon-from-lam0.3-s42" --resume-from "hf:grok_lens/p113-L2-lam0.3-uniform-frac0.3-s42/final.pt" --aux-lambda 0.3 --seed 42
+# train "p113-L2-cont-base-from-base-s42" --resume-from "hf:grok_lens/p113-L2-lam0.0-uniform-frac0.3-s42-50k/final.pt" --aux-lambda 0 --seed 42
 
 # --- LEGO multi-hop (front-loading; ~15 min/run) ---
 # for s in 42 43 44; do
 #   uv run python -m lego.train --generate-n 10000000 --seed $s --wandb-run-name "S3-std-8L-lensaux-base-s${s}"
 #   uv run python -m lego.train --generate-n 10000000 --seed $s --lens-aux --lens-aux-weight 0.3 --wandb-run-name "S3-std-8L-lensaux0.3-uniform-s${s}"
+#   uv run python -m lego.train --generate-n 10000000 --seed $s --lens-aux --lens-aux-weight 0.3 --lens-aux-weighting linear --wandb-run-name "S3-std-8L-lensaux0.3-linear-s${s}"
 # done
