@@ -261,28 +261,46 @@ def fig_coalescence(outdir: Path) -> None:
         print(f"  l*(k={ks}) {label}: {vals}")
 
     fig, ax = plt.subplots(figsize=(5.2, 3.2), dpi=160)
+    n_layers_max = 8
     for (label, seeds_vals), color in zip(
         data.items(), [VERM, BLUE, GREEN], strict=True
     ):
-        n_seeds = len(seeds_vals)
-        mean = [sum(v[i] for v in seeds_vals) / n_seeds for i in range(len(ks))]
+        # Mean over converged seeds only; non-converged (l* = n_layers,
+        # lens never >=0.95) would drag the line to a fake value.
+        mean = [
+            sum(vs) / len(vs)
+            if (vs := [v[i] for v in seeds_vals if v[i] < n_layers_max])
+            else float("nan")
+            for i in range(len(ks))
+        ]
         ax.plot(ks, mean, color=color, lw=1.6, marker="o", ms=4, label=label)
         for j, v in enumerate(seeds_vals):
-            ax.scatter(
-                [k + (j - 1) * 0.07 for k in ks], v, s=8, color=color, alpha=0.45
-            )
+            xs = [k + (j - 1) * 0.07 for k in ks]
+            conv = [(x, y) for x, y in zip(xs, v, strict=True) if y < n_layers_max]
+            nonc = [(x, y) for x, y in zip(xs, v, strict=True) if y >= n_layers_max]
+            if conv:
+                ax.scatter(*zip(*conv, strict=True), s=8, color=color, alpha=0.45)
+            if nonc:
+                ax.scatter(
+                    *zip(*nonc, strict=True),
+                    s=14,
+                    facecolors="none",
+                    edgecolors=color,
+                    alpha=0.7,
+                )
     style(ax)
     ax.set_xticks(ks)
-    ax.set_yticks(range(0, 8))
+    ax.set_yticks(range(0, 9), [*map(str, range(8)), "n/r"])
     ax.set_xlabel("hops k", fontsize=9)
     ax.set_ylabel("first layer where the lens\nreads the answer (l*)", fontsize=9)
     ax.set_title(
-        "LEGO: baselines only produce the answer in the last layers;\n"
-        "the aux loss front-loads it (lines = seed means)",
+        "LEGO, held-out chains: baselines answer only in the last layers;\n"
+        "the aux loss front-loads, most at small k (lines = converged-seed\n"
+        'means; open circles "n/r" = lens never reaches 95%)',
         fontsize=9.5,
         loc="left",
     )
-    ax.legend(frameon=False, fontsize=8.5, loc="upper left")
+    ax.legend(frameon=False, fontsize=8.5, loc="lower right")
     fig.tight_layout()
     fig.savefig(outdir / "coalescence.png", bbox_inches="tight")
     plt.close(fig)

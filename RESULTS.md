@@ -1014,3 +1014,62 @@ S3-credentials issue in the sync trap after training completed; its
 checkpoint was recovered manually and verified. A tmux-launched
 duplicate of the same run (killed mid-flight at 43k when the queue
 moved to SkyPilot) is renamed `*-aborted-tmux` in wandb.
+
+### 2026-07-27 — Review re-runs II: LEGO on a corrected split; honest numbers shrink but don't kill the story
+
+Reviewer-caught validity bug: the original LEGO runs sampled i.i.d.
+from only 335,922 possible chains, so test sets overlapped the training
+stream's coverage — "test accuracy" partly measured seen chains. The
+pipeline was rebuilt (this repo, commits f0b7ab8→d09300f): full
+enumeration, disjoint per-k-stratified split (test_frac 0.2, seed 42),
+map-style dataset, streaming machinery deleted. Two failed intermediate
+states are preserved for provenance: the first 11 re-runs
+(`*-split-*-kprop-failed` in wandb) sampled chains proportionally to
+the enumeration (83% k=6) and **never lifted off chance** (train acc
+1/6, loss = ln 6, 21k steps) — the short-chain curriculum is required
+for learnability, so `make_k_uniform_sampler` now restores the old
+per-k-uniform training distribution over the train split only.
+
+Canonical runs (`S3-std-8L-splitku-*`, jobs 147–157, 20,960 steps =
+40 epochs × 524, batch 512, lr 3e-4 cosine, seeds 42/43/44):
+
+```
+uv run python -m lego.train --wandb-run-name <run> --checkpoint-dir <dir> \
+  [--lens-aux --lens-aux-weight 0.3 [--lens-aux-weighting linear] \
+   [--lens-aux-mode all-positions]] --seed <s>
+```
+
+**Held-out accuracy** (per-k test strata: 1/7/43/259/1.5k/9.3k/56k examples):
+
+| arm | train | k0 | k1 | k2 | k3–k6 |
+|---|---|---|---|---|---|
+| baseline | 1.000 | 1/0/1 | 0.71–1.0 | 1.00 | 1.00 |
+| aux uniform | 1.000 | **0/0/0** | 0.43–0.86 | 0.86–0.98 | ~1.00 |
+| aux linear | 0.90–1.00 | 0/1/0 | 0.43 | 0.81–0.98 | s43 1.0; s42/s44 partial |
+| aux all-positions | 0.66–0.72 | 0 | 0.14 | 0.09–0.37 | 0.12–0.65 |
+
+Baselines were genuinely generalizing all along (100% at k≥2). The aux
+loss has a real short-chain cost the leaky eval hid (the held-out k=0
+identity chain fails 3/3 uniform seeds; k1 degraded). The
+reviewer-requested **all-positions variant** (next-token lens CE at
+every position) substantially harms the task at matched budget —
+answer-shaped supervision is the benign form, consistent with the
+specificity controls.
+
+**Held-out coalescence ℓ*(k)** (compare_lens_aux on the reconstructed
+split; None = final-layer lens <0.95):
+
+| arm | ℓ*(2) | ℓ*(4) | ℓ*(6) |
+|---|---|---|---|
+| baseline | 6/5/5 | 7/7/6 | 7/7/7 |
+| aux uniform | 5/3/2 | 5/4/3 | 7/6/5 |
+| aux linear | None/2/3 | 5/4/4 | None/5/None |
+
+Front-loading survives held-out evaluation but is smaller than the
+leaky numbers claimed (k=2 "layer 0–1" was memorization read through
+the lens). The anytime-estimate contrast is confirmed on held-out
+chains: pre-ℓ* aux lens entropy ≈ ln 6 (calibrated uncertainty),
+baseline entropy 0.1–0.5 at accuracy 0.0 (confidently wrong).
+coalescence.png regenerated from these checkpoints (means over
+converged seeds; non-converged marked "n/r"); WRITEUP LEGO section
+restated on held-out numbers.

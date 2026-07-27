@@ -34,16 +34,19 @@ from lego.model import AnyModel
 from lego.tokenizer import answer_position, encode
 from lego.training import load_model
 
+# The canonical runs: enumerated data, disjoint per-k-stratified train/test
+# split, k-uniform sampling (see RESULTS "Review re-runs II"). Probes below
+# run on the reconstructed held-out split only.
 RUNS: list[tuple[str, str, str]] = [
-    ("baseline s42", "S3-std-8L-lensaux-base-s42", "step_39000.pt"),
-    ("baseline s43", "S3-std-8L-lensaux-base-s43-stream", "step_19531.pt"),
-    ("baseline s44", "S3-std-8L-lensaux-base-s44-stream", "step_19531.pt"),
-    ("aux uniform s42", "S3-std-8L-lensaux0.3-uniform-s42", "step_39000.pt"),
-    ("aux uniform s43", "S3-std-8L-lensaux0.3-uniform-s43-stream", "step_19531.pt"),
-    ("aux uniform s44", "S3-std-8L-lensaux0.3-uniform-s44-stream", "step_19531.pt"),
-    ("aux linear s42", "S3-std-8L-lensaux0.3-linear-s42", "step_39000.pt"),
-    ("aux linear s43", "S3-std-8L-lensaux0.3-linear-s43-stream", "step_19531.pt"),
-    ("aux linear s44", "S3-std-8L-lensaux0.3-linear-s44-stream", "step_19531.pt"),
+    ("baseline s42", "S3-std-8L-splitku-base-s42", "step_20960.pt"),
+    ("baseline s43", "S3-std-8L-splitku-base-s43", "step_20960.pt"),
+    ("baseline s44", "S3-std-8L-splitku-base-s44", "step_20960.pt"),
+    ("aux uniform s42", "S3-std-8L-splitku-lensaux0.3-uniform-s42", "step_20960.pt"),
+    ("aux uniform s43", "S3-std-8L-splitku-lensaux0.3-uniform-s43", "step_20960.pt"),
+    ("aux uniform s44", "S3-std-8L-splitku-lensaux0.3-uniform-s44", "step_20960.pt"),
+    ("aux linear s42", "S3-std-8L-splitku-lensaux0.3-linear-s42", "step_20960.pt"),
+    ("aux linear s43", "S3-std-8L-splitku-lensaux0.3-linear-s43", "step_20960.pt"),
+    ("aux linear s44", "S3-std-8L-splitku-lensaux0.3-linear-s44", "step_20960.pt"),
 ]
 N_ELEMENTS = 6
 

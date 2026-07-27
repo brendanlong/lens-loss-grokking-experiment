@@ -45,11 +45,17 @@ def save_model_checkpoint(
 
 
 def artifact_path(relpath: str) -> Path:
-    """Download an artifact from the public HF dataset, returning its path.
+    """Resolve an artifact, preferring a local mirror over the HF dataset.
 
     ``relpath`` is e.g. ``grok_lens/<run_name>/final.pt`` or
-    ``lego/<run_name>/step_39000.pt``. Files are cached by huggingface_hub.
+    ``lego/<run_name>/step_39000.pt``. If ``data/artifacts/<relpath>``
+    exists (the escape hatch for analyzing fresh local runs before they
+    are uploaded), it is used directly; otherwise the file is downloaded
+    from the public HF dataset and cached by huggingface_hub.
     """
+    local = Path("data/artifacts") / relpath
+    if local.exists():
+        return local
     return Path(
         hf_hub_download(repo_id=HF_DATASET, repo_type="dataset", filename=relpath)
     )
