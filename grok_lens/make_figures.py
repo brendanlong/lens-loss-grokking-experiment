@@ -229,18 +229,43 @@ def fig_churn(api: wandb.Api, outdir: Path) -> None:
 
 
 def fig_coalescence(outdir: Path) -> None:
-    # Measured coalescence layers l*(k) (see RESULTS 2026-07-22/23 entries).
-    data = {
-        "baseline": ([5, 6, 7], [6, 6, 7], [6, 6, 7]),
-        "aux uniform": ([0, 2, 3], [1, 3, 5], [1, 3, 6]),
-        "aux linear": ([1, 2, 4], [2, 4, 5], [1, 3, 5]),
-    }
+    """Coalescence layer l*(k) per LEGO run, computed from the checkpoints
+    in lego.compare_lens_aux.RUNS on the held-out test split."""
+    from lego.compare_lens_aux import RUNS, coalescence_layer, test_examples_by_k
+    from lego.training import load_model as load_lego_model
+
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     ks = [2, 4, 6]
+    examples_by_k = test_examples_by_k(
+        k_min=0, k_max=6, test_frac=0.2, seed=42, n_examples=500
+    )
+    data: dict[str, list[list[int]]] = {}  # arm -> per-seed [l* for each k]
+    for label, run_name, ckpt_file in RUNS:
+        model, config = load_lego_model(
+            artifact_path(f"lego/{run_name}/{ckpt_file}"), device
+        )
+        n_layers = config.n_layers
+        vals: list[int] = []
+        for k in ks:
+            lstar = coalescence_layer(model, examples_by_k[k], device)
+            if lstar is None:
+                # never reaches 95% readability — plot at n_layers, flagged
+                print(
+                    f"WARNING: {run_name} k={k}: lens never >=0.95; plotting at "
+                    f"{n_layers} (= no layer)"
+                )
+                lstar = n_layers
+            vals.append(lstar)
+        arm = label.rsplit(" ", 1)[0]  # "baseline s42" -> "baseline"
+        data.setdefault(arm, []).append(vals)
+        print(f"  l*(k={ks}) {label}: {vals}")
+
     fig, ax = plt.subplots(figsize=(5.2, 3.2), dpi=160)
     for (label, seeds_vals), color in zip(
         data.items(), [VERM, BLUE, GREEN], strict=True
     ):
-        mean = [sum(v[i] for v in seeds_vals) / 3 for i in range(3)]
+        n_seeds = len(seeds_vals)
+        mean = [sum(v[i] for v in seeds_vals) / n_seeds for i in range(len(ks))]
         ax.plot(ks, mean, color=color, lw=1.6, marker="o", ms=4, label=label)
         for j, v in enumerate(seeds_vals):
             ax.scatter(
@@ -253,7 +278,7 @@ def fig_coalescence(outdir: Path) -> None:
     ax.set_ylabel("first layer where the lens\nreads the answer (l*)", fontsize=9)
     ax.set_title(
         "LEGO: baselines only produce the answer in the last layers;\n"
-        "the aux loss front-loads it (lines = 3-seed means)",
+        "the aux loss front-loads it (lines = seed means)",
         fontsize=9.5,
         loc="left",
     )

@@ -86,6 +86,20 @@ def test_examples_by_k(
     return {k: exs[:n_examples] for k, exs in group_by_k(test).items()}
 
 
+@torch.no_grad()
+def coalescence_layer(
+    model: AnyModel,
+    examples: list[ChainExample],
+    device: torch.device,
+) -> int | None:
+    """First layer whose lens top-1 at <predict> reads the final answer for
+    >= 95% of examples (l*), or None if no layer reaches that."""
+    k = len(examples[0].ops)
+    heat = analyze_predict_position(model, examples, device)
+    answer_col = heat[:, k]
+    return next((i for i, a in enumerate(answer_col.tolist()) if a >= 0.95), None)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--n-examples", type=int, default=500)
