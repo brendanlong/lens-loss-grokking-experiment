@@ -21,7 +21,13 @@ from pathlib import Path
 import torch
 
 from common.checkpoint import artifact_path
-from grok_lens.analyze_fourier import CELLS, SEEDS, fourier_power
+from grok_lens.analyze_fourier import (
+    CELLS,
+    CELLS_500K,
+    SEEDS,
+    SEEDS_500K,
+    fourier_power,
+)
 from grok_lens.config import GrokModelConfig
 from grok_lens.data import train_test_split
 from grok_lens.model import GrokTransformer
@@ -95,8 +101,9 @@ def main() -> None:
     parser.parse_args()
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-    for label, patterns in CELLS:
-        for seed in SEEDS:
+    all_cells = [(c, SEEDS) for c in CELLS] + [(c, SEEDS_500K) for c in CELLS_500K]
+    for (label, patterns), seeds in all_cells:
+        for seed in seeds:
             name = patterns[0].format(s=seed)
             try:
                 summary = knockout_run(name, Path("data/hf_cache"), device)

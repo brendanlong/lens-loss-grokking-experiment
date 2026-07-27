@@ -19,6 +19,7 @@ Usage:
 
 import argparse
 import math
+import re
 
 import torch
 import torch.nn.functional as F
@@ -103,23 +104,42 @@ def coalescence_layer(
     return next((i for i, a in enumerate(answer_col.tolist()) if a >= 0.95), None)
 
 
+def run_seed(run_name: str) -> int:
+    """Parse the training seed from a run name (`...-s43` -> 43).
+
+    lego.train seeds the train/test split with --seed, so each run has its
+    OWN split; probing every run against one fixed split would put other
+    seeds' training chains in the probe set (this bug shipped once — the
+    seed-42 probe set covered ~80% of the s43/s44 runs' train chains).
+    """
+    match = re.search(r"-s(\d+)$", run_name)
+    if match is None:
+        msg = f"run name has no -s<seed> suffix: {run_name}"
+        raise ValueError(msg)
+    return int(match.group(1))
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--n-examples", type=int, default=500)
-    # Must match the training run's data settings so the reconstructed
-    # test split is identical (and disjoint from the training data).
+    # Must match the training runs' data settings so each reconstructed
+    # test split is identical to that run's (and disjoint from its train
+    # data). The split seed itself is parsed from each run name.
     parser.add_argument("--k-min", type=int, default=0)
     parser.add_argument("--k-max", type=int, default=6)
     parser.add_argument("--test-frac", type=float, default=0.2)
-    parser.add_argument("--seed", type=int, default=42)
     args = parser.parse_args()
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-    examples_by_k = test_examples_by_k(
-        args.k_min, args.k_max, args.test_frac, args.seed, args.n_examples
-    )
+    probe_cache: dict[int, dict[int, list[ChainExample]]] = {}
 
     for label, run_name, ckpt_file in RUNS:
+        seed = run_seed(run_name)
+        if seed not in probe_cache:
+            probe_cache[seed] = test_examples_by_k(
+                args.k_min, args.k_max, args.test_frac, seed, args.n_examples
+            )
+        examples_by_k = probe_cache[seed]
         path = artifact_path(f"lego/{run_name}/{ckpt_file}")
         model, _config = load_model(path, device)
         print(f"\n=== {label} ({run_name}) ===")

@@ -963,8 +963,8 @@ land on the HF dataset). Commands per cell (seeds 42/43/44):
 ```
 uv run python -m grok_lens.train --wandb-run-name <run> \
   --checkpoint-dir data/grok_lens/checkpoints/<run> --log-fourier \
-  [--no-layernorm | --optimizer muon [--n-layers 3] | --total-steps 500000] \
-  [--aux-lambda 0.3] --seed <s> --total-steps 50000
+  [--no-layernorm | --optimizer muon [--n-layers 3]] \
+  [--aux-lambda 0.3] --seed <s> [--total-steps 50000 | --total-steps 500000]
 ```
 
 **No-LN control (`*-noln-50k`, reviewer question: is the instability
@@ -1003,11 +1003,17 @@ runs supersede the `*-muon-50k` arm as canonical.
 The L3-aux-Muon no-benefit anomaly reproduces exactly.
 
 **500k long-horizon (`*-s42-500k`, both arms): the asymmetry grows with
-budget.** Baseline: 32 dips, occupancy 0.92, "stable" only at 499k
-(right-censored — tail-5k 0.90, still dipping at the end of half a
-million steps). Aux λ0.3: **0 dips over 500k**, occupancy 1.00,
-permanently ≥0.95 from ~255k; its shallow sub-0.95 wobbles all predate
-255k and never approach 0.90. "Near-absorbing" was an understatement.
+budget.** At full eval resolution (5,000 evals via `scan_history` —
+first-pass numbers used wandb's default 500-sample downsampling, an
+adversarial-review catch; corrected same day): baseline 270 dips,
+occupancy 0.930, **never stabilizes** (no suffix of the run stays
+≥0.95; still dipping in the final 5k). Aux λ0.3: 13 dips over 500k —
+20× fewer — occupancy 0.996, ≥0.95 without exception only from ~459k
+(right-censored). Per-50k dip rate: baseline ~27 (consistent with the
+50k cells' 33–39), aux ~1.3 (consistent with 0–3). So the aux arm is
+*not* strictly absorbing at this horizon — it dips rarely but
+indefinitely — while the baseline never approaches stability; the
+50k-budget contrast extrapolates cleanly.
 
 Provenance notes: job 119 (noln s42) shows FAILED in the queue — an
 S3-credentials issue in the sync trap after training completed; its
@@ -1031,7 +1037,9 @@ for learnability, so `make_k_uniform_sampler` now restores the old
 per-k-uniform training distribution over the train split only.
 
 Canonical runs (`S3-std-8L-splitku-*`, jobs 147–157, 20,960 steps =
-40 epochs × 524, batch 512, lr 3e-4 cosine, seeds 42/43/44):
+40 epochs × 524, batch 512, lr 3e-4 cosine, seeds 42/43/44; note
+`--seed` seeds the train/test split too, so **each run has its own
+split** — analyses must reconstruct the split per run):
 
 ```
 uv run python -m lego.train --wandb-run-name <run> --checkpoint-dir <dir> \
@@ -1056,20 +1064,28 @@ every position) substantially harms the task at matched budget —
 answer-shaped supervision is the benign form, consistent with the
 specificity controls.
 
-**Held-out coalescence ℓ*(k)** (compare_lens_aux on the reconstructed
-split; None = final-layer lens <0.95):
+**Held-out coalescence ℓ*(k)** (compare_lens_aux, each run probed on
+ITS OWN reconstructed split — a first pass probed all runs on the
+seed-42 split, putting ~80% trained-on chains in the s43/s44 probe
+sets; adversarial-review catch, corrected same day. None = no layer,
+incl. the last, reaches 95% on that run's held-out chains):
 
 | arm | ℓ*(2) | ℓ*(4) | ℓ*(6) |
 |---|---|---|---|
-| baseline | 6/5/5 | 7/7/6 | 7/7/7 |
-| aux uniform | 5/3/2 | 5/4/3 | 7/6/5 |
-| aux linear | None/2/3 | 5/4/4 | None/5/None |
+| baseline | 6/5/6 | 7/7/6 | 7/7/7 |
+| aux uniform | 5/None/2 | 5/4/3 | 7/6/5 |
+| aux linear | None/None/3 | 5/4/4 | None/5/None |
 
-Front-loading survives held-out evaluation but is smaller than the
-leaky numbers claimed (k=2 "layer 0–1" was memorization read through
-the lens). The anytime-estimate contrast is confirmed on held-out
-chains: pre-ℓ* aux lens entropy ≈ ln 6 (calibrated uncertainty),
-baseline entropy 0.1–0.5 at accuracy 0.0 (confidently wrong).
-coalescence.png regenerated from these checkpoints (means over
+Front-loading survives held-out evaluation but is again smaller than
+first reported: it is **robust at k=4** (aux 3–5 vs baseline 6–7, all
+seeds), present at k=6 where the run converges (5–6 vs 7, uniform
+s43/s44), and **largely undefined at k=2** — most aux runs' held-out
+k=2 accuracy itself is below 0.95 (the short-chain cost), which caps
+lens readability at every layer, so their ℓ*(2) is None rather than
+early. The leaky evals' "k=2 readable at layer 0–1" was memorization
+read through the lens. The anytime-estimate contrast is confirmed on
+held-out chains: pre-ℓ* aux lens entropy ≈ ln 6 (calibrated
+uncertainty), baseline entropy 0.1–0.5 at accuracy 0.0 (confidently
+wrong). coalescence.png regenerated (per-run splits; means over
 converged seeds; non-converged marked "n/r"); WRITEUP LEGO section
-restated on held-out numbers.
+restated accordingly.

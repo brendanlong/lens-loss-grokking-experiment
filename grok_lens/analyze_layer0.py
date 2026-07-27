@@ -32,6 +32,9 @@ L2_CELLS: list[tuple[str, str]] = [
     ("L2 lam3.0", "p113-L2-lam3.0-uniform-frac0.3-s{s}"),
     ("L2 base muon", "p113-L2-lam0.0-uniform-frac0.3-s{s}-muon-50k"),
     ("L2 lam0.3 muon", "p113-L2-lam0.3-uniform-frac0.3-s{s}-muon-50k"),
+    ("L2 base tmuon", "p113-L2-lam0.0-uniform-frac0.3-s{s}-torchmuon-50k"),
+    ("L2 lam0.3 tmuon", "p113-L2-lam0.3-uniform-frac0.3-s{s}-torchmuon-50k"),
+    ("L2 base no-LN", "p113-L2-lam0.0-uniform-frac0.3-s{s}-noln-50k"),
 ]
 SEEDS = [42, 43, 44]
 

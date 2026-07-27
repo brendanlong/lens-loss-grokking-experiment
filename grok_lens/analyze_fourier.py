@@ -37,8 +37,21 @@ CELLS: list[tuple[str, list[str]]] = [
     ("L2 lam0.3 muon", ["p113-L2-lam0.3-uniform-frac0.3-s{s}-muon-50k"]),
     ("L3 base muon", ["p113-L3-lam0.0-uniform-frac0.3-s{s}-muon-50k"]),
     ("L3 lam0.3 muon", ["p113-L3-lam0.3-uniform-frac0.3-s{s}-muon-50k"]),
+    # torch.optim.Muon re-runs (the canonical Muon numbers in RESULTS/WRITEUP)
+    ("L2 base tmuon", ["p113-L2-lam0.0-uniform-frac0.3-s{s}-torchmuon-50k"]),
+    ("L2 lam0.3 tmuon", ["p113-L2-lam0.3-uniform-frac0.3-s{s}-torchmuon-50k"]),
+    ("L3 base tmuon", ["p113-L3-lam0.0-uniform-frac0.3-s{s}-torchmuon-50k"]),
+    ("L3 lam0.3 tmuon", ["p113-L3-lam0.3-uniform-frac0.3-s{s}-torchmuon-50k"]),
+    # no-LayerNorm architecture control (ends sparse yet trains stably)
+    ("L2 base no-LN", ["p113-L2-lam0.0-uniform-frac0.3-s{s}-noln-50k"]),
 ]
 SEEDS = [42, 43, 44]
+# 500k long-horizon pair exists for seed 42 only.
+CELLS_500K: list[tuple[str, list[str]]] = [
+    ("L2 base 500k", ["p113-L2-lam0.0-uniform-frac0.3-s{s}-500k"]),
+    ("L2 lam0.3 500k", ["p113-L2-lam0.3-uniform-frac0.3-s{s}-500k"]),
+]
+SEEDS_500K = [42]
 
 
 def fourier_power(embed: torch.Tensor, p: int) -> torch.Tensor:
@@ -77,9 +90,10 @@ def main() -> None:
     parser.parse_args()
 
     print(f"{'cell':20s} {'seed':>4s} {'top6 power':>10s} {'n90':>4s}  top-6 freqs")
-    for label, patterns in CELLS:
+    all_cells = [(c, SEEDS) for c in CELLS] + [(c, SEEDS_500K) for c in CELLS_500K]
+    for (label, patterns), seeds in all_cells:
         top6s, n90s = [], []
-        for seed in SEEDS:
+        for seed in seeds:
             name = patterns[0].format(s=seed)
             path = artifact_path(f"grok_lens/{name}/final.pt")
             ckpt = torch.load(path, weights_only=True, map_location="cpu")

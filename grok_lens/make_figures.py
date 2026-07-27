@@ -230,21 +230,33 @@ def fig_churn(api: wandb.Api, outdir: Path) -> None:
 
 def fig_coalescence(outdir: Path) -> None:
     """Coalescence layer l*(k) per LEGO run, computed from the checkpoints
-    in lego.compare_lens_aux.RUNS on the held-out test split."""
-    from lego.compare_lens_aux import RUNS, coalescence_layer, test_examples_by_k
+    in lego.compare_lens_aux.RUNS, each probed on ITS OWN held-out split
+    (the split seed follows the training --seed, parsed from the run name)."""
+    from lego.compare_lens_aux import (
+        RUNS,
+        coalescence_layer,
+        run_seed,
+        test_examples_by_k,
+    )
     from lego.training import load_model as load_lego_model
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     ks = [2, 4, 6]
-    examples_by_k = test_examples_by_k(
-        k_min=0, k_max=6, test_frac=0.2, seed=42, n_examples=500
-    )
+    probe_cache: dict[int, dict[int, list]] = {}
     data: dict[str, list[list[int]]] = {}  # arm -> per-seed [l* for each k]
+    n_layers_max = 0
     for label, run_name, ckpt_file in RUNS:
+        seed = run_seed(run_name)
+        if seed not in probe_cache:
+            probe_cache[seed] = test_examples_by_k(
+                k_min=0, k_max=6, test_frac=0.2, seed=seed, n_examples=500
+            )
+        examples_by_k = probe_cache[seed]
         model, config = load_lego_model(
             artifact_path(f"lego/{run_name}/{ckpt_file}"), device
         )
         n_layers = config.n_layers
+        n_layers_max = max(n_layers_max, n_layers)
         vals: list[int] = []
         for k in ks:
             lstar = coalescence_layer(model, examples_by_k[k], device)
@@ -261,7 +273,6 @@ def fig_coalescence(outdir: Path) -> None:
         print(f"  l*(k={ks}) {label}: {vals}")
 
     fig, ax = plt.subplots(figsize=(5.2, 3.2), dpi=160)
-    n_layers_max = 8
     for (label, seeds_vals), color in zip(
         data.items(), [VERM, BLUE, GREEN], strict=True
     ):
@@ -290,7 +301,7 @@ def fig_coalescence(outdir: Path) -> None:
                 )
     style(ax)
     ax.set_xticks(ks)
-    ax.set_yticks(range(0, 9), [*map(str, range(8)), "n/r"])
+    ax.set_yticks(range(0, n_layers_max + 1), [*map(str, range(n_layers_max)), "n/r"])
     ax.set_xlabel("hops k", fontsize=9)
     ax.set_ylabel("first layer where the lens\nreads the answer (l*)", fontsize=9)
     ax.set_title(

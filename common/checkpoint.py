@@ -48,13 +48,15 @@ def artifact_path(relpath: str) -> Path:
     """Resolve an artifact, preferring a local mirror over the HF dataset.
 
     ``relpath`` is e.g. ``grok_lens/<run_name>/final.pt`` or
-    ``lego/<run_name>/step_39000.pt``. If ``data/artifacts/<relpath>``
+    ``lego/<run_name>/step_39000.pt``. If ``<repo>/data/artifacts/<relpath>``
     exists (the escape hatch for analyzing fresh local runs before they
-    are uploaded), it is used directly; otherwise the file is downloaded
+    are uploaded), it is used directly — announced on stdout since it
+    shadows the published HF bytes; otherwise the file is downloaded
     from the public HF dataset and cached by huggingface_hub.
     """
-    local = Path("data/artifacts") / relpath
+    local = Path(__file__).resolve().parents[1] / "data" / "artifacts" / relpath
     if local.exists():
+        print(f"[artifact_path] using local mirror: {local}")
         return local
     return Path(
         hf_hub_download(repo_id=HF_DATASET, repo_type="dataset", filename=relpath)

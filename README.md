@@ -5,7 +5,7 @@ predict the answer through the model's own unembedding — the logit lens
 turned into a training objective (the LayerSkip/CALM loss, borrowed from
 the inference-efficiency literature)?
 
-We expected it to break grokking. Instead we found, across ~130 runs on
+We expected it to break grokking. Instead we found, across ~160 runs on
 modular arithmetic (plus a multi-hop composition task):
 
 1. **Canonical grokking never actually sticks.** Run past the grok point

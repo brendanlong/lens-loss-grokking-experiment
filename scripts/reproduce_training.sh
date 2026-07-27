@@ -1,5 +1,5 @@
 #!/bin/bash
-# Retrain everything from scratch. ~130 runs; each 30k-step run takes
+# Retrain everything from scratch. ~160 runs; each 30k-step run takes
 # ~12 min on an RTX 3060 Ti-class GPU (50k ~19 min, 100k ~38 min) — the
 # full sweep is roughly a day of consumer-GPU time. Runs log to wandb by
 # default (pass --no-wandb to disable). Checkpoints land in
@@ -47,9 +47,25 @@ for s in 42 43 44; do train "p113-L2-lam0.3-uniform-frac0.3-s${s}" --aux-lambda 
 # train "p113-L2-cont-auxon-from-lam0.3-s42" --resume-from "hf:grok_lens/p113-L2-lam0.3-uniform-frac0.3-s42/final.pt" --aux-lambda 0.3 --seed 42
 # train "p113-L2-cont-base-from-base-s42" --resume-from "hf:grok_lens/p113-L2-lam0.0-uniform-frac0.3-s42-50k/final.pt" --aux-lambda 0 --seed 42
 
-# --- LEGO multi-hop (front-loading; ~15 min/run) ---
+# --- Architecture control: no LayerNorm (instability requires LN) ---
+# for s in 42 43 44; do train "p113-L2-lam0.0-uniform-frac0.3-s${s}-noln-50k" --no-layernorm --seed $s --total-steps 50000 --log-fourier; done
+
+# --- torch.optim.Muon re-runs (canonical Muon arm) ---
+# for s in 42 43 44; do train "p113-L2-lam0.0-uniform-frac0.3-s${s}-torchmuon-50k" --optimizer muon --seed $s --total-steps 50000 --log-fourier; done
+# for s in 42 43 44; do train "p113-L2-lam0.3-uniform-frac0.3-s${s}-torchmuon-50k" --optimizer muon --aux-lambda 0.3 --seed $s --total-steps 50000 --log-fourier; done
+# for s in 42 43 44; do train "p113-L3-lam0.0-uniform-frac0.3-s${s}-torchmuon-50k" --optimizer muon --n-layers 3 --seed $s --total-steps 50000 --log-fourier; done
+# for s in 42 43 44; do train "p113-L3-lam0.3-uniform-frac0.3-s${s}-torchmuon-50k" --optimizer muon --n-layers 3 --aux-lambda 0.3 --seed $s --total-steps 50000 --log-fourier; done
+
+# --- 500k long-horizon pair (~3.5 h each) ---
+# train "p113-L2-lam0.0-uniform-frac0.3-s42-500k" --seed 42 --total-steps 500000 --log-fourier
+# train "p113-L2-lam0.3-uniform-frac0.3-s42-500k" --aux-lambda 0.3 --seed 42 --total-steps 500000 --log-fourier
+
+# --- LEGO multi-hop (front-loading; enumerated data, disjoint per-k split,
+# --- k-uniform sampling; ~10 min/run). Note: --seed also seeds each run's
+# --- train/test split; the analyses reconstruct the split per run name. ---
 # for s in 42 43 44; do
-#   uv run python -m lego.train --generate-n 10000000 --seed $s --wandb-run-name "S3-std-8L-lensaux-base-s${s}"
-#   uv run python -m lego.train --generate-n 10000000 --seed $s --lens-aux --lens-aux-weight 0.3 --wandb-run-name "S3-std-8L-lensaux0.3-uniform-s${s}"
-#   uv run python -m lego.train --generate-n 10000000 --seed $s --lens-aux --lens-aux-weight 0.3 --lens-aux-weighting linear --wandb-run-name "S3-std-8L-lensaux0.3-linear-s${s}"
+#   uv run python -m lego.train --seed $s --wandb-run-name "S3-std-8L-splitku-base-s${s}" --checkpoint-dir "data/lego/checkpoints/S3-std-8L-splitku-base-s${s}"
+#   uv run python -m lego.train --seed $s --lens-aux --lens-aux-weight 0.3 --wandb-run-name "S3-std-8L-splitku-lensaux0.3-uniform-s${s}" --checkpoint-dir "data/lego/checkpoints/S3-std-8L-splitku-lensaux0.3-uniform-s${s}"
+#   uv run python -m lego.train --seed $s --lens-aux --lens-aux-weight 0.3 --lens-aux-weighting linear --wandb-run-name "S3-std-8L-splitku-lensaux0.3-linear-s${s}" --checkpoint-dir "data/lego/checkpoints/S3-std-8L-splitku-lensaux0.3-linear-s${s}"
 # done
+# for s in 42 43; do uv run python -m lego.train --seed $s --lens-aux --lens-aux-weight 0.3 --lens-aux-mode all-positions --wandb-run-name "S3-std-8L-splitku-lensaux0.3-allpos-s${s}" --checkpoint-dir "data/lego/checkpoints/S3-std-8L-splitku-lensaux0.3-allpos-s${s}"; done
