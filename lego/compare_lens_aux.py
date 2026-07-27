@@ -29,7 +29,7 @@ from lego.analyze_logit_lens import (
     analyze_op_positions,
     analyze_predict_position,
 )
-from lego.generator import S3Example, generate_fixed_dataset
+from lego.generator import ChainExample, enumerate_split, group_by_k
 from lego.model import AnyModel
 from lego.tokenizer import answer_position, encode
 from lego.training import load_model
@@ -51,7 +51,7 @@ N_ELEMENTS = 6
 @torch.no_grad()
 def element_entropy_at_predict(
     model: AnyModel,
-    examples: list[S3Example],
+    examples: list[ChainExample],
     k: int,
     device: torch.device,
 ) -> Tensor:
@@ -69,19 +69,45 @@ def element_entropy_at_predict(
     return torch.stack(entropies)
 
 
+def test_examples_by_k(
+    k_min: int,
+    k_max: int,
+    test_frac: float,
+    seed: int,
+    n_examples: int,
+) -> dict[int, list[ChainExample]]:
+    """Reconstruct the held-out test split used in training, grouped by k.
+
+    Uses the same (k_min, k_max, test_frac, seed) as lego.train, so the
+    probe examples are exactly the chains the model never trained on.
+    Caps each k at n_examples (small k have few held-out chains).
+    """
+    _train, test = enumerate_split(k_min, k_max, test_frac=test_frac, seed=seed)
+    return {k: exs[:n_examples] for k, exs in group_by_k(test).items()}
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--n-examples", type=int, default=500)
-    parser.add_argument("--seed", type=int, default=999)
+    # Must match the training run's data settings so the reconstructed
+    # test split is identical (and disjoint from the training data).
+    parser.add_argument("--k-min", type=int, default=0)
+    parser.add_argument("--k-max", type=int, default=6)
+    parser.add_argument("--test-frac", type=float, default=0.2)
+    parser.add_argument("--seed", type=int, default=42)
     args = parser.parse_args()
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+    examples_by_k = test_examples_by_k(
+        args.k_min, args.k_max, args.test_frac, args.seed, args.n_examples
+    )
 
     for label, run_name, ckpt_file in RUNS:
         path = artifact_path(f"lego/{run_name}/{ckpt_file}")
         model, _config = load_model(path, device)
         print(f"\n=== {label} ({run_name}) ===")
         for k in (2, 4, 6):
-            examples = generate_fixed_dataset(k, args.n_examples, seed=args.seed)
+            examples = examples_by_k[k]
             heat = analyze_predict_position(model, examples, device)
             answer_col = heat[:, k]  # per-layer P(lens top-1 == final answer)
             entropy = element_entropy_at_predict(model, examples, k, device)
@@ -93,7 +119,7 @@ def main() -> None:
             print(f"k={k}  l*={coalesce!s:>4s}  answer acc/layer: {acc_str}")
             print(f"      (ln6={math.log(6):.2f})  elem entropy/layer: {ent_str}")
         # op-position trajectory staircase at k=6 (diag = layer j holds traj[j+1])
-        examples = generate_fixed_dataset(6, args.n_examples, seed=args.seed)
+        examples = examples_by_k[6]
         op_heat = analyze_op_positions(model, examples, device)
         print("      op-position staircase (rows=layers, cols=traj steps):")
         for layer_idx in range(op_heat.shape[0]):

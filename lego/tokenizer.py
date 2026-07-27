@@ -112,16 +112,6 @@ def element_token(idx: int) -> int:
     return _S3_TOKENIZER.element_token(idx)
 
 
-def element_index(token_id: int) -> int:
-    """Convert element token ID (1-6) to element index (0-5). S3 only."""
-    return _S3_TOKENIZER.element_index(token_id)
-
-
-def token_to_str(token_id: int) -> str:
-    """Convert a token ID to a human-readable string. S3 only."""
-    return _S3_TOKENIZER.token_to_str(token_id)
-
-
 def encode(example: S3Example) -> list[int]:
     """Encode an S₃ example as a token sequence (no padding)."""
     return _S3_TOKENIZER.encode(example)
@@ -130,16 +120,6 @@ def encode(example: S3Example) -> list[int]:
 def encode_padded(example: S3Example, k_max: int) -> list[int]:
     """Encode and pad to the max sequence length for k_max operations."""
     return _S3_TOKENIZER.encode_padded(example, k_max)
-
-
-def decode(token_ids: list[int]) -> str:
-    """Decode token IDs to a human-readable string (skipping padding)."""
-    return _S3_TOKENIZER.decode(token_ids)
-
-
-def is_element_token(token_id: int) -> bool:
-    """Check if a token ID is a group element token (1-6). S3 only."""
-    return _S3_TOKENIZER.is_element_token(token_id)
 
 
 def seq_len(k: int) -> int:

@@ -68,26 +68,29 @@ def lego_model_config(
 class LegoTrainingConfig(BaseModel):
     """Training hyperparameters for LEGO S3 experiments."""
 
-    # Data -- chain length range
+    # Data -- chain length range. The dataset is the FULL enumeration of
+    # chains with k in [k_min, k_max] (335,922 for S3, k in [0, 6]),
+    # split into disjoint train/test sets.
     k_min: int = 0
     k_max: int = 6
-    n_test: int = 1_000  # test examples per chain length k
-
-    # Streaming mode
-    generate_n: int | None = None
-
-    # Fixed dataset mode (ignored when generate_n is set)
-    n_train: int = 100_000
+    test_frac: float = 0.2  # held-out fraction per chain length k
 
     # Training: answer-only cross-entropy at the <predict> position,
-    # optionally with grok_lens-style deep supervision (Phase 5)
+    # optionally with grok_lens-style deep supervision (Phase 5).
+    # lens_aux_mode "answer" supervises intermediate layers at the
+    # <predict> position only; "all-positions" applies next-token
+    # logit-lens CE at every non-pad position.
     lens_aux: bool = False
     lens_aux_weight: float = 0.3
     lens_aux_weighting: Literal["uniform", "linear"] = "uniform"
+    lens_aux_mode: Literal["answer", "all-positions"] = "answer"
     batch_size: int = 512
     lr: float = 3e-4
     weight_decay: float = 0.0
-    n_epochs: int = 200
+    # 40 epochs over the ~269k-example train split (test_frac=0.2 of
+    # 335,922) ≈ 10.7M examples seen, matching the old streaming default
+    # of --generate-n 10000000.
+    n_epochs: int = 40
     lr_schedule: Literal["cosine", "constant"] = "cosine"
 
     # Step-based logging and evaluation

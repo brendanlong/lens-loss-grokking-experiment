@@ -1,15 +1,13 @@
-"""Tests for LEGO composition task: generator, tokenizer, and data pipeline."""
-
-import random
+"""Tests for LEGO composition task: enumeration, tokenizer, data, and losses."""
 
 import pytest
 import torch
+import torch.nn.functional as F
 
 from lego.data import (
-    S3FixedDataset,
+    ChainDataset,
     collate_s3,
-    compute_answer_accuracy,
-    compute_answer_only_loss,
+    encode_trajectory,
     make_eval_batch,
 )
 from lego.generator import (
@@ -18,13 +16,20 @@ from lego.generator import (
     GROUPS,
     N_ELEMENTS,
     S3,
-    S3Example,
+    ChainExample,
     compose,
-    generate_example,
-    generate_fixed_dataset,
-    generate_mixed_dataset,
-    generate_stream,
+    enumerate_chains,
+    enumerate_split,
+    group_by_k,
+    make_example,
+    train_test_split,
     verify_trajectory,
+)
+from lego.losses import (
+    compute_answer_accuracy,
+    compute_answer_only_loss,
+    compute_lens_aux_loss,
+    compute_lens_aux_loss_all_positions,
 )
 from lego.tokenizer import (
     ELEMENT_OFFSET,
@@ -35,14 +40,10 @@ from lego.tokenizer import (
     VOCAB_SIZE,
     Tokenizer,
     answer_position,
-    decode,
-    element_index,
     element_token,
     encode,
     encode_padded,
-    is_element_token,
     seq_len,
-    token_to_str,
 )
 
 # ---- Cayley table tests (group axiom verification) ----
@@ -134,71 +135,79 @@ class TestCayleyTable:
             assert col == elements, f"Col {ELEMENTS[a]} not a permutation"
 
 
-# ---- Generator tests ----
+# ---- Enumeration tests ----
 
 
-class TestGenerateExample:
-    def test_trajectory_length(self) -> None:
-        rng = random.Random(42)
-        ex = generate_example(5, rng)
-        assert len(ex.ops) == 5
-        assert len(ex.trajectory) == 6  # k + 1
+def expected_count(k_min: int, k_max: int, n: int = N_ELEMENTS) -> int:
+    """n starts x n^k op sequences for each k in [k_min, k_max]."""
+    return sum(n * n**k for k in range(k_min, k_max + 1))
 
-    def test_trajectory_starts_with_start(self) -> None:
-        rng = random.Random(42)
-        ex = generate_example(3, rng)
-        assert ex.trajectory[0] == ex.start
 
-    def test_trajectory_consistency(self) -> None:
-        rng = random.Random(42)
-        for _ in range(50):
-            k = rng.randint(1, 10)
-            ex = generate_example(k, random.Random(rng.randint(0, 10000)))
+class TestEnumerateChains:
+    def test_count_formula(self) -> None:
+        """Count == sum over k of n · n^k for several small ranges."""
+        assert len(enumerate_chains(0, 0)) == 6
+        assert len(enumerate_chains(0, 1)) == 6 + 36
+        assert len(enumerate_chains(0, 2)) == expected_count(0, 2)  # 258
+        assert len(enumerate_chains(1, 3)) == expected_count(1, 3)  # 1548
+        assert len(enumerate_chains(0, 3)) == expected_count(0, 3)  # 1554
+
+    def test_full_s3_count(self) -> None:
+        """The full k in [0, 6] enumeration has 335,922 chains."""
+        assert expected_count(0, 6) == 335_922
+
+    def test_all_unique(self) -> None:
+        examples = enumerate_chains(0, 3)
+        keys = {(ex.start, ex.ops) for ex in examples}
+        assert len(keys) == len(examples)
+
+    def test_all_trajectories_verify(self) -> None:
+        for ex in enumerate_chains(0, 3):
             assert verify_trajectory(ex)
 
-    def test_elements_in_range(self) -> None:
-        rng = random.Random(42)
-        for _ in range(20):
-            ex = generate_example(6, rng)
-            assert 0 <= ex.start < N_ELEMENTS
-            for op in ex.ops:
-                assert 0 <= op < N_ELEMENTS
-            for state in ex.trajectory:
-                assert 0 <= state < N_ELEMENTS
+    def test_k_range(self) -> None:
+        lengths = {len(ex.ops) for ex in enumerate_chains(1, 3)}
+        assert lengths == {1, 2, 3}
 
     def test_deterministic(self) -> None:
-        ex1 = generate_example(5, random.Random(123))
-        ex2 = generate_example(5, random.Random(123))
-        assert ex1 == ex2
-
-    def test_different_seeds_differ(self) -> None:
-        ex1 = generate_example(5, random.Random(1))
-        ex2 = generate_example(5, random.Random(2))
-        assert ex1 != ex2
-
-    def test_k_one(self) -> None:
-        rng = random.Random(42)
-        ex = generate_example(1, rng)
-        assert len(ex.ops) == 1
-        assert len(ex.trajectory) == 2
-        assert ex.trajectory[1] == compose(ex.ops[0], ex.start)
+        assert enumerate_chains(0, 3) == enumerate_chains(0, 3)
 
     def test_k_zero_identity(self) -> None:
-        rng = random.Random(42)
-        ex = generate_example(0, rng)
-        assert len(ex.ops) == 0
-        assert len(ex.trajectory) == 1
-        assert ex.trajectory[0] == ex.start
+        for ex in enumerate_chains(0, 0):
+            assert len(ex.ops) == 0
+            assert ex.trajectory == (ex.start,)
 
-    def test_k_negative_raises(self) -> None:
-        with pytest.raises(ValueError, match="k must be >= 0"):
-            generate_example(-1, random.Random(42))
+    def test_invalid_ranges_raise(self) -> None:
+        with pytest.raises(ValueError, match="k_min must be >= 0"):
+            enumerate_chains(-1, 3)
+        with pytest.raises(ValueError, match="k_max"):
+            enumerate_chains(3, 2)
+
+    def test_final_states_exactly_uniform(self) -> None:
+        """Over the full enumeration of length-3 chains, every final state
+        appears exactly n^3 times (each op-product is a bijection on starts)."""
+        counts = [0] * N_ELEMENTS
+        for ex in enumerate_chains(3, 3):
+            counts[ex.trajectory[-1]] += 1
+        assert counts == [N_ELEMENTS**3] * N_ELEMENTS
+
+
+class TestMakeExample:
+    def test_trajectory(self) -> None:
+        # r · e = r, s · r = r2s
+        ex = make_example(0, (1, 3))
+        assert ex.trajectory == (0, 1, 5)
+        assert verify_trajectory(ex)
+
+    def test_k_zero(self) -> None:
+        ex = make_example(4, ())
+        assert ex.trajectory == (4,)
 
 
 class TestVerifyTrajectory:
     def test_valid(self) -> None:
         # r · e = r, s · r = r2s
-        ex = S3Example(
+        ex = ChainExample(
             start=0,  # e
             ops=(1, 3),  # r, s
             trajectory=(0, 1, 5),  # e, r·e=r, s·r=r2s
@@ -206,7 +215,7 @@ class TestVerifyTrajectory:
         assert verify_trajectory(ex)
 
     def test_invalid_trajectory(self) -> None:
-        ex = S3Example(
+        ex = ChainExample(
             start=0,
             ops=(1, 3),
             trajectory=(0, 1, 3),  # wrong: s·r=r2s not s
@@ -214,7 +223,7 @@ class TestVerifyTrajectory:
         assert not verify_trajectory(ex)
 
     def test_wrong_length(self) -> None:
-        ex = S3Example(
+        ex = ChainExample(
             start=0,
             ops=(1,),
             trajectory=(0, 1, 2),  # too long
@@ -222,69 +231,73 @@ class TestVerifyTrajectory:
         assert not verify_trajectory(ex)
 
 
-class TestGenerateStream:
-    def test_correct_count(self) -> None:
-        examples = list(generate_stream(1, 6, 100))
-        assert len(examples) == 100
-
-    def test_all_valid(self) -> None:
-        for ex in generate_stream(1, 6, 50):
-            assert verify_trajectory(ex)
-
-    def test_mixed_lengths(self) -> None:
-        """Stream produces chains with varying lengths."""
-        lengths = {len(ex.ops) for ex in generate_stream(1, 6, 200)}
-        # With 200 samples from [1,6], should see most lengths
-        assert len(lengths) >= 4
+# ---- Train/test split tests ----
 
 
-class TestGenerateFixedDataset:
-    def test_all_same_k(self) -> None:
-        examples = generate_fixed_dataset(3, 50)
-        for ex in examples:
-            assert len(ex.ops) == 3
+class TestTrainTestSplit:
+    def test_disjoint_and_covers_enumeration(self) -> None:
+        examples = enumerate_chains(0, 3)
+        train, test = train_test_split(examples, test_frac=0.2, seed=42)
+        train_keys = {(ex.start, ex.ops) for ex in train}
+        test_keys = {(ex.start, ex.ops) for ex in test}
+        assert not train_keys & test_keys
+        assert len(train) + len(test) == len(examples)
+        assert train_keys | test_keys == {(ex.start, ex.ops) for ex in examples}
 
-    def test_all_valid(self) -> None:
-        for ex in generate_fixed_dataset(5, 50):
-            assert verify_trajectory(ex)
+    def test_deterministic_given_seed(self) -> None:
+        examples = enumerate_chains(0, 3)
+        split_a = train_test_split(examples, test_frac=0.2, seed=42)
+        split_b = train_test_split(examples, test_frac=0.2, seed=42)
+        assert split_a == split_b
+
+    def test_different_seeds_differ(self) -> None:
+        examples = enumerate_chains(0, 3)
+        _, test_a = train_test_split(examples, test_frac=0.2, seed=42)
+        _, test_b = train_test_split(examples, test_frac=0.2, seed=43)
+        assert {(ex.start, ex.ops) for ex in test_a} != {
+            (ex.start, ex.ops) for ex in test_b
+        }
+
+    def test_every_k_represented_in_test(self) -> None:
+        """Stratification: even the 6-example k=0 stratum gets a test chain."""
+        _, test = train_test_split(enumerate_chains(0, 4), test_frac=0.2, seed=42)
+        assert set(group_by_k(test)) == {0, 1, 2, 3, 4}
+
+    def test_stratum_sizes(self) -> None:
+        examples = enumerate_chains(0, 3)
+        train, test = train_test_split(examples, test_frac=0.2, seed=42)
+        test_by_k = group_by_k(test)
+        train_by_k = group_by_k(train)
+        for k in range(4):
+            n_k = 6 * 6**k
+            assert len(test_by_k[k]) == max(1, round(0.2 * n_k))
+            assert len(train_by_k[k]) == n_k - len(test_by_k[k])
+
+    def test_invalid_test_frac_raises(self) -> None:
+        examples = enumerate_chains(0, 1)
+        for frac in (0.0, 1.0, -0.1, 1.5):
+            with pytest.raises(ValueError, match="test_frac"):
+                train_test_split(examples, test_frac=frac, seed=42)
+
+    def test_enumerate_split_matches_manual(self) -> None:
+        manual = train_test_split(enumerate_chains(0, 3), test_frac=0.2, seed=7)
+        assert enumerate_split(0, 3, test_frac=0.2, seed=7) == manual
 
 
-class TestGenerateMixedDataset:
-    def test_correct_count(self) -> None:
-        examples = generate_mixed_dataset(1, 6, 100)
-        assert len(examples) == 100
-
-
-class TestTrajectoryDistribution:
-    def test_trajectory_states_approximately_uniform(self) -> None:
-        """Verify trajectory states are approximately uniform over S₃ elements.
-
-        Since start is uniform and each op is uniform/independent,
-        all trajectory positions should be approximately uniform.
-        """
-        n = 6000
-        examples = list(generate_stream(3, 3, n, seed=42))
-        # Check final state distribution
-        counts = [0] * N_ELEMENTS
-        for ex in examples:
-            counts[ex.trajectory[-1]] += 1
-        expected = n / N_ELEMENTS
-        for elem_idx, count in enumerate(counts):
-            ratio = count / expected
-            assert 0.85 < ratio < 1.15, (
-                f"Element {ELEMENTS[elem_idx]}: {count}/{n} (expected ~{expected:.0f})"
-            )
+class TestGroupByK:
+    def test_groups_and_preserves_order(self) -> None:
+        examples = enumerate_chains(0, 2)
+        by_k = group_by_k(examples)
+        assert set(by_k) == {0, 1, 2}
+        for k, exs in by_k.items():
+            assert all(len(ex.ops) == k for ex in exs)
+        assert sum(len(exs) for exs in by_k.values()) == len(examples)
 
 
 # ---- Tokenizer tests ----
 
 
 class TestElementToken:
-    def test_roundtrip(self) -> None:
-        for idx in range(N_ELEMENTS):
-            token = element_token(idx)
-            assert element_index(token) == idx
-
     def test_range(self) -> None:
         for idx in range(N_ELEMENTS):
             token = element_token(idx)
@@ -299,24 +312,26 @@ class TestElementToken:
 
 class TestTokenToStr:
     def test_elements(self) -> None:
+        tok = Tokenizer(S3)
         for idx, name in enumerate(ELEMENTS):
-            assert token_to_str(element_token(idx)) == name
+            assert tok.token_to_str(tok.element_token(idx)) == name
 
     def test_special_tokens(self) -> None:
-        assert token_to_str(PAD_ID) == "<pad>"
-        assert token_to_str(START_TOKEN) == "<start>"
-        assert token_to_str(OP_TOKEN) == "<op>"
-        assert token_to_str(PREDICT_TOKEN) == "<predict>"
+        tok = Tokenizer(S3)
+        assert tok.token_to_str(PAD_ID) == "<pad>"
+        assert tok.token_to_str(START_TOKEN) == "<start>"
+        assert tok.token_to_str(OP_TOKEN) == "<op>"
+        assert tok.token_to_str(PREDICT_TOKEN) == "<predict>"
 
     def test_unknown_raises(self) -> None:
         with pytest.raises(ValueError):
-            token_to_str(99)
+            Tokenizer(S3).token_to_str(99)
 
 
 class TestEncode:
     def test_k1(self) -> None:
         # start=e(0), ops=[r(1)], trajectory=[e, r]
-        ex = S3Example(start=0, ops=(1,), trajectory=(0, 1))
+        ex = ChainExample(start=0, ops=(1,), trajectory=(0, 1))
         tokens = encode(ex)
         assert len(tokens) == seq_len(1)  # 2*1 + 4 = 6
         assert tokens == [
@@ -331,15 +346,8 @@ class TestEncode:
     def test_k3(self) -> None:
         # start=r(1), ops=[s(3), r2(2), e(0)]
         # trajectory: r, s·r=r2s(5), r2·r2s=rs(4), e·rs=rs(4)
-        state = 1  # r
-        state = compose(3, state)  # s·r = r2s = 5
-        assert state == 5
-        state = compose(2, state)  # r2·r2s = rs = 4
-        assert state == 4
-        state = compose(0, state)  # e·rs = rs = 4
-        assert state == 4
-
-        ex = S3Example(start=1, ops=(3, 2, 0), trajectory=(1, 5, 4, 4))
+        ex = make_example(1, (3, 2, 0))
+        assert ex.trajectory == (1, 5, 4, 4)
         tokens = encode(ex)
         assert len(tokens) == seq_len(3)  # 2*3 + 4 = 10
         assert tokens[0] == START_TOKEN
@@ -347,26 +355,26 @@ class TestEncode:
         assert tokens[-1] == element_token(4)  # answer: rs
 
     def test_decode_readable(self) -> None:
-        ex = S3Example(start=0, ops=(1, 3), trajectory=(0, 1, 5))
+        ex = ChainExample(start=0, ops=(1, 3), trajectory=(0, 1, 5))
         tokens = encode(ex)
-        result = decode(tokens)
+        result = Tokenizer(S3).decode(tokens)
         assert result == "<start> e <op> r <op> s <predict> r2s"
 
 
 class TestEncodePadded:
     def test_padding_length(self) -> None:
-        ex = S3Example(start=0, ops=(1,), trajectory=(0, 1))
+        ex = ChainExample(start=0, ops=(1,), trajectory=(0, 1))
         tokens = encode_padded(ex, k_max=6)
         assert len(tokens) == seq_len(6)  # 2*6 + 4 = 16
 
     def test_padding_tokens(self) -> None:
-        ex = S3Example(start=0, ops=(1,), trajectory=(0, 1))
+        ex = ChainExample(start=0, ops=(1,), trajectory=(0, 1))
         tokens = encode_padded(ex, k_max=3)
         # k=1: 6 real tokens, k_max=3: 10 total, so 4 padding
         assert tokens[6:] == [PAD_ID] * 4
 
     def test_no_padding_at_max(self) -> None:
-        ex = S3Example(start=0, ops=(1, 2, 3), trajectory=(0, 1, 0, 5))
+        ex = ChainExample(start=0, ops=(1, 2, 3), trajectory=(0, 1, 0, 5))
         tokens = encode_padded(ex, k_max=3)
         assert PAD_ID not in tokens
 
@@ -383,18 +391,6 @@ class TestPositions:
         assert answer_position(6) == 15
 
 
-class TestIsElementToken:
-    def test_elements(self) -> None:
-        for idx in range(N_ELEMENTS):
-            assert is_element_token(element_token(idx))
-
-    def test_non_elements(self) -> None:
-        assert not is_element_token(PAD_ID)
-        assert not is_element_token(START_TOKEN)
-        assert not is_element_token(OP_TOKEN)
-        assert not is_element_token(PREDICT_TOKEN)
-
-
 class TestVocabSize:
     def test_no_overlap(self) -> None:
         """All token IDs are within vocab range and distinct."""
@@ -406,32 +402,96 @@ class TestVocabSize:
         assert max(all_ids) == VOCAB_SIZE - 1
 
 
+class TestTokenizerClass:
+    """Test the Tokenizer class (S3)."""
+
+    def test_vocab_size(self) -> None:
+        tok = Tokenizer(S3)
+        assert tok.vocab_size == S3.order + 4
+
+    def test_element_roundtrip(self) -> None:
+        tok = Tokenizer(S3)
+        for idx in range(S3.order):
+            token = tok.element_token(idx)
+            assert tok.element_index(token) == idx
+            assert tok.is_element_token(token)
+
+    def test_special_tokens_not_elements(self) -> None:
+        tok = Tokenizer(S3)
+        assert not tok.is_element_token(tok.pad_id)
+        assert not tok.is_element_token(tok.start_token)
+        assert not tok.is_element_token(tok.op_token)
+        assert not tok.is_element_token(tok.predict_token)
+
+    def test_encode_decode_roundtrip(self) -> None:
+        tok = Tokenizer(S3)
+        ex = make_example(2, (1, 3, 0))
+        tokens = tok.encode(ex)
+        assert len(tokens) == seq_len(3)
+        decoded = tok.decode(tokens)
+        assert "<start>" in decoded
+        assert "<predict>" in decoded
+
+    def test_no_token_overlap(self) -> None:
+        """Token IDs don't collide."""
+        for group in GROUPS.values():
+            tok = Tokenizer(group)
+            all_ids = {tok.pad_id, tok.start_token, tok.op_token, tok.predict_token}
+            for idx in range(group.order):
+                all_ids.add(tok.element_token(idx))
+            assert len(all_ids) == tok.vocab_size
+
+
 # ---- Data pipeline tests ----
 
 
-class TestS3FixedDataset:
+class TestChainDataset:
     def test_length(self) -> None:
-        examples = generate_mixed_dataset(1, 6, 50)
-        ds = S3FixedDataset(examples, k_max=6)
-        assert len(ds) == 50
+        examples = enumerate_chains(0, 2)
+        ds = ChainDataset(examples, k_max=2)
+        assert len(ds) == len(examples)
 
     def test_shapes(self) -> None:
-        examples = generate_mixed_dataset(1, 4, 10)
-        ds = S3FixedDataset(examples, k_max=4)
+        examples = enumerate_chains(1, 4)[:10]
+        ds = ChainDataset(examples, k_max=4)
         item = ds[0]
         assert item["input_ids"].shape == (seq_len(4),)
         assert item["answer_position"].shape == ()
         assert item["chain_length"].shape == ()
+        assert item["trajectory"].shape == (5,)  # k_max + 1
+
+    def test_trajectory_encoding(self) -> None:
+        ex = make_example(1, (3,))
+        ds = ChainDataset([ex], k_max=3)
+        expected = encode_trajectory(ex, k_max=3)
+        assert ds[0]["trajectory"].tolist() == expected
+        # trajectory (1, 5) as element tokens (offset 1), padded to k_max+1
+        assert expected == [2, 6, PAD_ID, PAD_ID]
 
 
 class TestCollate:
     def test_batch_shapes(self) -> None:
-        examples = generate_mixed_dataset(1, 4, 10)
-        ds = S3FixedDataset(examples, k_max=4)
+        examples = enumerate_chains(1, 4)[:10]
+        ds = ChainDataset(examples, k_max=4)
         batch = collate_s3([ds[i] for i in range(5)])
         assert batch["input_ids"].shape == (5, seq_len(4))
         assert batch["answer_position"].shape == (5,)
         assert batch["chain_length"].shape == (5,)
+        assert batch["trajectory"].shape == (5, 5)
+
+
+class TestMakeEvalBatch:
+    def test_shapes(self) -> None:
+        examples = enumerate_chains(3, 3)[:10]
+        batch = make_eval_batch(examples, k_max=6)
+        assert batch["input_ids"].shape == (10, seq_len(6))
+        assert batch["answer_position"].shape == (10,)
+        assert batch["chain_length"].shape == (10,)
+        assert (batch["chain_length"] == 3).all()
+        assert (batch["answer_position"] == answer_position(3)).all()
+
+
+# ---- Loss tests ----
 
 
 class TestComputeLoss:
@@ -494,70 +554,10 @@ class TestComputeAnswerAccuracy:
         assert acc < 0.2
 
 
-class TestMakeEvalBatch:
-    def test_shapes(self) -> None:
-        examples = generate_fixed_dataset(3, 10)
-        batch = make_eval_batch(examples, k_max=6)
-        assert batch["input_ids"].shape == (10, seq_len(6))
-        assert batch["answer_position"].shape == (10,)
-        assert batch["chain_length"].shape == (10,)
-        assert (batch["chain_length"] == 3).all()
-        assert (batch["answer_position"] == answer_position(3)).all()
-
-
-# ---- Tokenizer class tests ----
-
-
-class TestTokenizerClass:
-    """Test the Tokenizer class (S3)."""
-
-    def test_vocab_size(self) -> None:
-        tok = Tokenizer(S3)
-        assert tok.vocab_size == S3.order + 4
-
-    def test_element_roundtrip(self) -> None:
-        tok = Tokenizer(S3)
-        for idx in range(S3.order):
-            token = tok.element_token(idx)
-            assert tok.element_index(token) == idx
-            assert tok.is_element_token(token)
-
-    def test_special_tokens_not_elements(self) -> None:
-        tok = Tokenizer(S3)
-        assert not tok.is_element_token(tok.pad_id)
-        assert not tok.is_element_token(tok.start_token)
-        assert not tok.is_element_token(tok.op_token)
-        assert not tok.is_element_token(tok.predict_token)
-
-    def test_encode_decode_roundtrip(self) -> None:
-        tok = Tokenizer(S3)
-        rng = random.Random(42)
-        ex = generate_example(3, rng, S3)
-        tokens = tok.encode(ex)
-        assert len(tokens) == seq_len(3)
-        decoded = tok.decode(tokens)
-        assert "<start>" in decoded
-        assert "<predict>" in decoded
-
-    def test_no_token_overlap(self) -> None:
-        """Token IDs don't collide."""
-        for group in GROUPS.values():
-            tok = Tokenizer(group)
-            all_ids = {tok.pad_id, tok.start_token, tok.op_token, tok.predict_token}
-            for idx in range(group.order):
-                all_ids.add(tok.element_token(idx))
-            assert len(all_ids) == tok.vocab_size
-
-
 class TestLensAuxLoss:
     """grok_lens-style deep supervision at the answer position (Phase 5)."""
 
     def test_matches_manual_computation(self) -> None:
-        import torch
-        import torch.nn.functional as F
-
-        from lego.data import compute_lens_aux_loss
-
         torch.manual_seed(0)
         n_layers, batch, seq, dim, vocab = 4, 5, 10, 8, 10
         residuals = [torch.randn(batch, seq, dim) for _ in range(n_layers)]
@@ -584,10 +584,6 @@ class TestLensAuxLoss:
         assert torch.allclose(loss, expected, atol=1e-6)
 
     def test_single_layer_is_zero(self) -> None:
-        import torch
-
-        from lego.data import compute_lens_aux_loss
-
         residuals = [torch.randn(3, 6, 8)]
         loss = compute_lens_aux_loss(
             residuals,
@@ -600,10 +596,6 @@ class TestLensAuxLoss:
 
     def test_final_layer_excluded(self) -> None:
         """Perturbing only the final layer's residual must not change the loss."""
-        import torch
-
-        from lego.data import compute_lens_aux_loss
-
         torch.manual_seed(0)
         residuals = [torch.randn(3, 6, 8) for _ in range(3)]
         args = (
@@ -615,4 +607,111 @@ class TestLensAuxLoss:
         loss_a = compute_lens_aux_loss(residuals, *args)
         residuals[-1] = torch.randn(3, 6, 8)
         loss_b = compute_lens_aux_loss(residuals, *args)
+        assert torch.allclose(loss_a, loss_b)
+
+
+class TestLensAuxLossAllPositions:
+    """Full-sequence lens deep supervision: next-token CE, pad-masked."""
+
+    @staticmethod
+    def _padded_input_ids(batch: int, seq: int, vocab: int) -> torch.Tensor:
+        """Random non-pad ids with a pad tail of varying length per row."""
+        input_ids = torch.randint(1, vocab, (batch, seq))
+        for i in range(batch):
+            pad_from = seq - 1 - i % 3  # rows with 1, 2, 3 trailing pads
+            input_ids[i, pad_from:] = 0
+        return input_ids
+
+    def test_matches_manual_computation(self) -> None:
+        torch.manual_seed(0)
+        n_layers, batch, seq, dim, vocab = 4, 5, 10, 8, 10
+        residuals = [torch.randn(batch, seq, dim) for _ in range(n_layers)]
+        input_ids = self._padded_input_ids(batch, seq, vocab)
+        norm = torch.nn.LayerNorm(dim)
+        emb = torch.randn(vocab, dim)
+
+        loss = compute_lens_aux_loss_all_positions(
+            residuals, input_ids, norm, emb, weighting="linear"
+        )
+        # manual: per intermediate layer, CE of logits at t vs input_ids[t+1],
+        # pad targets ignored
+        targets = input_ids[:, 1:].reshape(-1)
+        per_layer = []
+        for r in residuals[:-1]:
+            logits = F.linear(norm(r[:, :-1]), emb)
+            per_layer.append(
+                F.cross_entropy(
+                    logits.reshape(-1, vocab),
+                    targets,
+                    ignore_index=0,
+                )
+            )
+        w = torch.arange(1, n_layers, dtype=torch.float32)
+        w = w / w.sum()
+        expected = torch.stack(
+            [wi * pl for wi, pl in zip(w, per_layer, strict=True)]
+        ).sum()
+        assert torch.allclose(loss, expected, atol=1e-6)
+
+    def test_ignores_pad_targets(self) -> None:
+        """Perturbing residuals at positions whose next-token target is pad
+        (and at the last position, which has no target) must not change
+        the loss."""
+        torch.manual_seed(0)
+        n_layers, batch, seq, dim, vocab = 3, 4, 8, 8, 10
+        residuals = [torch.randn(batch, seq, dim) for _ in range(n_layers)]
+        input_ids = self._padded_input_ids(batch, seq, vocab)
+        norm = torch.nn.LayerNorm(dim)
+        emb = torch.randn(vocab, dim)
+
+        loss_a = compute_lens_aux_loss_all_positions(residuals, input_ids, norm, emb)
+        pad_target = torch.zeros(batch, seq, dtype=torch.bool)
+        pad_target[:, :-1] = input_ids[:, 1:] == 0
+        pad_target[:, -1] = True  # last position predicts nothing
+        for r in residuals:
+            r[pad_target] = torch.randn_like(r[pad_target])
+        loss_b = compute_lens_aux_loss_all_positions(residuals, input_ids, norm, emb)
+        assert torch.allclose(loss_a, loss_b)
+
+    def test_uniform_weighting_is_layer_mean(self) -> None:
+        torch.manual_seed(0)
+        n_layers, batch, seq, dim, vocab = 4, 3, 6, 8, 10
+        residuals = [torch.randn(batch, seq, dim) for _ in range(n_layers)]
+        input_ids = self._padded_input_ids(batch, seq, vocab)
+        norm = torch.nn.LayerNorm(dim)
+        emb = torch.randn(vocab, dim)
+
+        loss = compute_lens_aux_loss_all_positions(residuals, input_ids, norm, emb)
+        targets = input_ids[:, 1:].reshape(-1)
+        per_layer = [
+            F.cross_entropy(
+                F.linear(norm(r[:, :-1]), emb).reshape(-1, vocab),
+                targets,
+                ignore_index=0,
+            )
+            for r in residuals[:-1]
+        ]
+        expected = torch.stack(per_layer).mean()
+        assert torch.allclose(loss, expected, atol=1e-6)
+
+    def test_single_layer_is_zero(self) -> None:
+        residuals = [torch.randn(3, 6, 8)]
+        loss = compute_lens_aux_loss_all_positions(
+            residuals,
+            torch.randint(1, 9, (3, 6)),
+            torch.nn.LayerNorm(8),
+            torch.randn(9, 8),
+        )
+        assert loss.item() == 0.0
+
+    def test_final_layer_excluded(self) -> None:
+        """Perturbing only the final layer's residual must not change the loss."""
+        torch.manual_seed(0)
+        residuals = [torch.randn(3, 6, 8) for _ in range(3)]
+        input_ids = torch.randint(1, 9, (3, 6))
+        norm = torch.nn.LayerNorm(8)
+        emb = torch.randn(9, 8)
+        loss_a = compute_lens_aux_loss_all_positions(residuals, input_ids, norm, emb)
+        residuals[-1] = torch.randn(3, 6, 8)
+        loss_b = compute_lens_aux_loss_all_positions(residuals, input_ids, norm, emb)
         assert torch.allclose(loss_a, loss_b)

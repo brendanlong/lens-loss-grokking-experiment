@@ -4,40 +4,39 @@ Trains decoder-only transformers on S3 group composition chains.
 Measures per-chain-length accuracy to track how many sequential
 composition steps the model has learned.
 
+The dataset is the FULL enumeration of chains with k in [k_min, k_max]
+(335,922 chains for k in [0, 6]), split into disjoint train/test sets with
+a seeded shuffle — evaluation is always on held-out chains the model never
+trained on. The default --n-epochs 40 over the ~269k-example train split
+(test_frac=0.2) gives ~10.7M examples seen, matching the old streaming
+default of 10M generated examples.
+
 Usage:
     # Smoke test (tiny model)
     uv run python -m lego.train \
         --k-max 3 --n-layers 4 --dim 64 --n-heads 2 \
-        --generate-n 100000 --batch-size 64 --no-wandb
+        --n-epochs 1 --batch-size 64 --no-wandb
 
-    # Baseline (streaming, 6 hops)
-    uv run python -m lego.train --k-max 6 --generate-n 10000000
+    # Baseline (6 hops)
+    uv run python -m lego.train --k-max 6
 
     # With the lens auxiliary loss (deep supervision)
-    uv run python -m lego.train \
-        --k-max 6 --generate-n 10000000 --lens-aux --lens-aux-weight 0.3
+    uv run python -m lego.train --k-max 6 --lens-aux --lens-aux-weight 0.3
+
+    # Full-sequence lens aux (next-token CE at every position)
+    uv run python -m lego.train --k-max 6 --lens-aux --lens-aux-mode all-positions
 """
 
 import argparse
 from pathlib import Path
 
 import torch
-from torch.utils.data import DataLoader, Dataset
+from torch.utils.data import DataLoader
 
 from lego.config import LegoTrainingConfig, lego_model_config
-from lego.data import (
-    S3FixedDataset,
-    S3StreamingDataset,
-    collate_s3,
-)
-from lego.generator import (
-    S3,
-    generate_fixed_dataset,
-    generate_mixed_dataset,
-)
-from lego.model import (
-    create_model,
-)
+from lego.data import ChainDataset, collate_s3
+from lego.generator import S3, enumerate_split, group_by_k
+from lego.model import create_model
 from lego.tokenizer import Tokenizer
 from lego.training import train_lego_model
 
@@ -51,22 +50,13 @@ def main() -> None:
     parser.add_argument("--k-min", type=int, default=0)
     parser.add_argument("--k-max", type=int, default=6)
     parser.add_argument(
-        "--n-train",
-        type=int,
-        default=None,
-        help="Training set size (fixed dataset mode)",
-    )
-    parser.add_argument(
-        "--n-test",
-        type=int,
-        default=1000,
-        help="Test examples per chain length k",
-    )
-    parser.add_argument(
-        "--generate-n",
-        type=int,
-        default=None,
-        help="Streaming mode: generate N examples, 1 epoch",
+        "--test-frac",
+        type=float,
+        default=0.2,
+        help=(
+            "Fraction of the full chain enumeration held out for test "
+            "(stratified per chain length k)"
+        ),
     )
 
     # Model
@@ -95,7 +85,24 @@ def main() -> None:
         choices=["uniform", "linear"],
         help="Layer weighting: uniform, or linear (CALM-style later-weighted).",
     )
-    parser.add_argument("--n-epochs", type=int, default=200)
+    parser.add_argument(
+        "--lens-aux-mode",
+        default="answer",
+        choices=["answer", "all-positions"],
+        help=(
+            "answer: lens CE at the <predict> position only (default); "
+            "all-positions: next-token lens CE at every non-pad position."
+        ),
+    )
+    parser.add_argument(
+        "--n-epochs",
+        type=int,
+        default=40,
+        help=(
+            "Epochs over the train split (~269k examples at defaults; "
+            "40 epochs ≈ 10.7M examples seen)"
+        ),
+    )
     parser.add_argument("--batch-size", type=int, default=512)
     parser.add_argument("--lr", type=float, default=3e-4)
     parser.add_argument(
@@ -149,20 +156,18 @@ def main() -> None:
     torch.manual_seed(args.seed)
 
     # Config
-    n_train = args.n_train or 100_000
     config = LegoTrainingConfig(
         k_min=args.k_min,
         k_max=args.k_max,
-        n_train=n_train,
-        n_test=args.n_test,
-        generate_n=args.generate_n,
+        test_frac=args.test_frac,
         lens_aux=args.lens_aux,
         lens_aux_weight=args.lens_aux_weight,
         lens_aux_weighting=args.lens_aux_weighting,
+        lens_aux_mode=args.lens_aux_mode,
         batch_size=args.batch_size,
         lr=args.lr,
         weight_decay=args.weight_decay,
-        n_epochs=1 if args.generate_n else args.n_epochs,
+        n_epochs=args.n_epochs,
         lr_schedule=args.lr_schedule,
         eval_every_steps=args.eval_every_steps,
         log_every_steps=args.log_every_steps,
@@ -181,60 +186,45 @@ def main() -> None:
         vocab_size=tokenizer.vocab_size,
     )
 
-    # Run name — resolve and preflight the checkpoint namespace *before* the
-    # expensive data generation / model build, so a reused name fails in seconds.
     run_name = args.wandb_run_name or (
         f"{group.name}_std"
         f"_{args.dim}d_{args.n_heads}h_{args.n_layers}L"
         f"_k{args.k_min}-{args.k_max}"
     )
 
-    # Test set — generate per-k for clean evaluation
-    print(
-        f"Generating test set: {args.n_test} examples per k, "
-        f"k in [{args.k_min}, {args.k_max}]"
+    # Data: enumerate ALL chains and split into disjoint train/test sets.
+    # The test split is stratified per chain length k, so per-k eval always
+    # has held-out examples for every k.
+    train_examples, test_examples = enumerate_split(
+        args.k_min,
+        args.k_max,
+        test_frac=args.test_frac,
+        seed=args.seed,
+        group=group,
     )
-    test_examples_per_k = {
-        k: generate_fixed_dataset(k, args.n_test, seed=args.seed + 1 + k, group=group)
-        for k in range(args.k_min, args.k_max + 1)
-    }
+    test_examples_per_k = group_by_k(test_examples)
+    n_total = len(train_examples) + len(test_examples)
+    print(
+        f"Enumerated {n_total} chains, k in [{args.k_min}, {args.k_max}]: "
+        f"{len(train_examples)} train / {len(test_examples)} test "
+        f"(test_frac={args.test_frac}, seed={args.seed})"
+    )
+    per_k_str = " ".join(
+        f"k{k}:{len(v)}" for k, v in sorted(test_examples_per_k.items())
+    )
+    print(f"Held-out test examples per k: {per_k_str}")
 
-    # Training data
-    if args.generate_n:
-        print(
-            f"Streaming mode: k in [{args.k_min}, {args.k_max}], "
-            f"generate_n={args.generate_n}"
-        )
-        train_dataset: Dataset[dict[str, torch.Tensor]] = S3StreamingDataset(
-            args.k_min,
-            args.k_max,
-            args.generate_n,
-            seed=args.seed + 100,
-            group=group,
-            tokenizer=tokenizer,
-        )
-        steps_per_epoch = args.generate_n // config.batch_size
-    else:
-        print(f"Fixed dataset: k in [{args.k_min}, {args.k_max}], n_train={n_train}")
-        train_examples = generate_mixed_dataset(
-            args.k_min,
-            args.k_max,
-            n_train,
-            seed=args.seed,
-            group=group,
-        )
-        train_dataset = S3FixedDataset(train_examples, args.k_max, tokenizer)
-        steps_per_epoch = n_train // config.batch_size
-
+    train_dataset = ChainDataset(train_examples, args.k_max, tokenizer)
     train_loader = DataLoader(
         train_dataset,
         batch_size=config.batch_size,
-        shuffle=not args.generate_n,
+        shuffle=True,
         collate_fn=collate_s3,
         drop_last=True,
         pin_memory=device.type == "cuda",
     )
 
+    steps_per_epoch = len(train_examples) // config.batch_size
     total_steps = steps_per_epoch * config.n_epochs
 
     # Model
@@ -243,7 +233,8 @@ def main() -> None:
 
     if config.lens_aux:
         print(
-            f"Lens aux loss: enabled (weight={config.lens_aux_weight}, "
+            f"Lens aux loss: enabled (mode={config.lens_aux_mode}, "
+            f"weight={config.lens_aux_weight}, "
             f"weighting={config.lens_aux_weighting})"
         )
     print(f"Training for {config.n_epochs} epoch(s) ({total_steps} steps)")
@@ -271,6 +262,7 @@ def main() -> None:
         lens_aux=config.lens_aux,
         lens_aux_weight=config.lens_aux_weight,
         lens_aux_weighting=config.lens_aux_weighting,
+        lens_aux_mode=config.lens_aux_mode,
         early_stop_patience=None,
         log_every_steps=config.log_every_steps,
         eval_every_steps=config.eval_every_steps,
@@ -289,7 +281,7 @@ def main() -> None:
     )
 
     # Final summary
-    print("\n=== Final Evaluation ===")
+    print("\n=== Final Evaluation (held-out test split) ===")
     for k in range(args.k_min, args.k_max + 1):
         key = f"test_acc/k_{k}"
         print(f"  k={k:2d}: {result.final_eval.get(key, 0.0):.1%}")

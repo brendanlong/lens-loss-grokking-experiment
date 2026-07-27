@@ -1,10 +1,15 @@
-"""Group composition chain generator.
+"""Group composition chain enumeration.
 
 Supports multiple finite groups for the LEGO composition task:
   - S3: Symmetric group on 3 elements (6 elements, non-abelian, solvable)
 
 Each example is a chain: a starting element followed by k group operations.
 The model must output the result of composing all operations in sequence.
+
+The task distribution is small enough to enumerate exhaustively (335,922
+chains for S3 with k in [0, 6]), so the dataset is the *full* enumeration
+with an explicit, disjoint train/test split — no sampling, no possibility
+of train/test overlap.
 
 Composition convention: **left-multiplication**.
     "Apply operation g to state x" means computing g · x.
@@ -19,8 +24,8 @@ Example (k=3, S3):
     <start> r <op> s <op> r2 <predict> [answer]
 """
 
+import itertools
 import random
-from collections.abc import Iterator
 from typing import Literal, NamedTuple
 
 # --- Group definitions ---
@@ -56,31 +61,6 @@ def _compose_perm(a: tuple[int, ...], b: tuple[int, ...]) -> tuple[int, ...]:
     return tuple(a[b[i]] for i in range(len(a)))
 
 
-def _perm_label(perm: tuple[int, ...]) -> str:
-    """Generate a compact label for a permutation.
-
-    Uses cycle notation, e.g. (012) for the 3-cycle 0→1→2→0.
-    Identity is labeled 'e'.
-    """
-    n = len(perm)
-    if all(perm[i] == i for i in range(n)):
-        return "e"
-    visited = [False] * n
-    cycles: list[str] = []
-    for i in range(n):
-        if visited[i] or perm[i] == i:
-            visited[i] = True
-            continue
-        cycle = []
-        j = i
-        while not visited[j]:
-            visited[j] = True
-            cycle.append(str(j))
-            j = perm[j]
-        cycles.append("(" + "".join(cycle) + ")")
-    return "".join(cycles)
-
-
 # S3 with the original element ordering (e, r, r2, s, rs, r2s) for
 # backward compatibility with existing checkpoints and tests.
 _S3_PERMS = [
@@ -109,12 +89,7 @@ N_ELEMENTS = S3.order
 CAYLEY: list[list[int]] = S3.cayley
 
 
-def get_group(name: GroupName) -> Group:
-    """Get a group by name."""
-    return GROUPS[name]
-
-
-# --- Example generation ---
+# --- Example enumeration ---
 
 
 class ChainExample(NamedTuple):
@@ -142,30 +117,124 @@ def compose(left: int, right: int, group: Group = S3) -> int:
     return group.cayley[left][right]
 
 
-def generate_example(k: int, rng: random.Random, group: Group = S3) -> ChainExample:
-    """Generate one chain with exactly k operations.
+def make_example(start: int, ops: tuple[int, ...], group: Group = S3) -> ChainExample:
+    """Build a ChainExample from a start element and op sequence.
 
-    Args:
-        k: Number of operations (chain length). Must be >= 0.
-            k=0 is the identity case: answer = start element.
-        rng: Random number generator.
-        group: The group to use for composition.
+    Computes the full trajectory via left-multiplication.
     """
-    if k < 0:
-        msg = f"k must be >= 0, got {k}"
-        raise ValueError(msg)
-
-    n = group.order
-    start = rng.randint(0, n - 1)
-    ops = tuple(rng.randint(0, n - 1) for _ in range(k))
-
     trajectory: list[int] = [start]
     state = start
     for op in ops:
         state = compose(op, state, group)
         trajectory.append(state)
-
     return ChainExample(start=start, ops=ops, trajectory=tuple(trajectory))
+
+
+def enumerate_chains(
+    k_min: int,
+    k_max: int,
+    group: Group = S3,
+) -> list[ChainExample]:
+    """Deterministically enumerate ALL chains with k in [k_min, k_max].
+
+    Every (start element, op sequence) pair is generated exactly once, in a
+    fixed order (increasing k, then start, then ops lexicographically), with
+    trajectories computed. For a group of order n there are n * n^k chains of
+    length k, so e.g. S3 with k in [0, 6] yields
+    6 * (6^0 + 6^1 + ... + 6^6) = 335,922 chains — small enough to hold the
+    entire task distribution in memory and split it exactly.
+
+    Args:
+        k_min: Minimum number of operations (>= 0). k=0 is the identity
+            case: answer = start element.
+        k_max: Maximum number of operations (inclusive).
+        group: The group to use for composition.
+    """
+    if k_min < 0:
+        msg = f"k_min must be >= 0, got {k_min}"
+        raise ValueError(msg)
+    if k_max < k_min:
+        msg = f"k_max ({k_max}) must be >= k_min ({k_min})"
+        raise ValueError(msg)
+
+    n = group.order
+    examples: list[ChainExample] = []
+    for k in range(k_min, k_max + 1):
+        for start in range(n):
+            for ops in itertools.product(range(n), repeat=k):
+                examples.append(make_example(start, ops, group))
+    return examples
+
+
+def train_test_split(
+    examples: list[ChainExample],
+    test_frac: float,
+    seed: int,
+) -> tuple[list[ChainExample], list[ChainExample]]:
+    """Split examples into disjoint train/test sets via a seeded shuffle.
+
+    The split is **stratified by chain length k**: within each k, examples
+    are shuffled with a seeded RNG and `round(test_frac * n_k)` (at least 1,
+    when the stratum has more than one example) are held out for test. This
+    guarantees every chain length is represented in the test set — a plain
+    global shuffle can leave small strata (e.g. the 6 k=0 chains) with no
+    test examples at all.
+
+    Train and test are disjoint by construction (each input example is
+    assigned to exactly one side); together they cover the full input list.
+
+    Args:
+        examples: Examples to split (typically from enumerate_chains).
+        test_frac: Fraction of each stratum held out for test, in (0, 1).
+        seed: RNG seed; the same (examples, test_frac, seed) always yields
+            the same split.
+
+    Returns:
+        (train, test) lists, each ordered by increasing k.
+    """
+    if not 0.0 < test_frac < 1.0:
+        msg = f"test_frac must be in (0, 1), got {test_frac}"
+        raise ValueError(msg)
+
+    rng = random.Random(seed)
+    by_k = group_by_k(examples)
+    train: list[ChainExample] = []
+    test: list[ChainExample] = []
+    for k in sorted(by_k):
+        stratum = list(by_k[k])
+        rng.shuffle(stratum)
+        n_test = round(test_frac * len(stratum))
+        if len(stratum) > 1:
+            n_test = min(max(1, n_test), len(stratum) - 1)
+        test.extend(stratum[:n_test])
+        train.extend(stratum[n_test:])
+    return train, test
+
+
+def enumerate_split(
+    k_min: int,
+    k_max: int,
+    test_frac: float = 0.2,
+    seed: int = 42,
+    group: Group = S3,
+) -> tuple[list[ChainExample], list[ChainExample]]:
+    """Enumerate all chains for k in [k_min, k_max] and split train/test.
+
+    Convenience wrapper combining enumerate_chains + train_test_split so
+    that training and analysis scripts reconstruct the *same* held-out test
+    split from (k_min, k_max, test_frac, seed).
+    """
+    return train_test_split(enumerate_chains(k_min, k_max, group), test_frac, seed)
+
+
+def group_by_k(
+    examples: list[ChainExample],
+) -> dict[int, list[ChainExample]]:
+    """Group examples by chain length k (= len(ops)), preserving order."""
+    by_k: dict[int, list[ChainExample]] = {}
+    for ex in examples:
+        by_k.setdefault(len(ex.ops), []).append(ex)
+    return by_k
 
 
 def verify_trajectory(example: ChainExample, group: Group = S3) -> bool:
@@ -180,39 +249,3 @@ def verify_trajectory(example: ChainExample, group: Group = S3) -> bool:
         if example.trajectory[i + 1] != state:
             return False
     return True
-
-
-def generate_stream(
-    k_min: int,
-    k_max: int,
-    n_examples: int,
-    seed: int = 42,
-    group: Group = S3,
-) -> Iterator[ChainExample]:
-    """Stream chain examples with random chain lengths."""
-    rng = random.Random(seed)
-    for _ in range(n_examples):
-        k = rng.randint(k_min, k_max)
-        yield generate_example(k, rng, group)
-
-
-def generate_fixed_dataset(
-    k: int,
-    n_examples: int,
-    seed: int = 42,
-    group: Group = S3,
-) -> list[ChainExample]:
-    """Generate a fixed dataset where all chains have length k."""
-    rng = random.Random(seed)
-    return [generate_example(k, rng, group) for _ in range(n_examples)]
-
-
-def generate_mixed_dataset(
-    k_min: int,
-    k_max: int,
-    n_examples: int,
-    seed: int = 42,
-    group: Group = S3,
-) -> list[ChainExample]:
-    """Generate a fixed dataset with random chain lengths in [k_min, k_max]."""
-    return list(generate_stream(k_min, k_max, n_examples, seed, group))

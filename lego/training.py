@@ -11,21 +11,22 @@ from pathlib import Path
 from typing import Literal
 
 import torch
-import wandb
 from torch.utils.data import DataLoader
 
+import wandb
 from common.checkpoint import (
     save_model_checkpoint as _save_checkpoint,
 )
 from common.schedule import should_log_and_eval
 from lego.config import ModelConfig
-from lego.data import (
+from lego.data import make_eval_batch
+from lego.generator import ChainExample
+from lego.losses import (
     compute_answer_accuracy,
     compute_answer_only_loss,
     compute_lens_aux_loss,
-    make_eval_batch,
+    compute_lens_aux_loss_all_positions,
 )
-from lego.generator import S3Example
 from lego.model import (
     AnyModel,
     create_model,
@@ -47,7 +48,7 @@ class TrainingResult:
 @torch.no_grad()
 def evaluate(
     model: torch.nn.Module,
-    test_examples_per_k: dict[int, list[S3Example]],
+    test_examples_per_k: dict[int, list[ChainExample]],
     k_max: int,
     batch_size: int,
     device: torch.device,
@@ -155,7 +156,7 @@ def create_optimizer_and_scheduler(
 def train_lego_model(
     model: AnyModel,
     train_loader: DataLoader[dict[str, torch.Tensor]],
-    test_examples_per_k: dict[int, list[S3Example]],
+    test_examples_per_k: dict[int, list[ChainExample]],
     model_config: ModelConfig,
     device: torch.device,
     *,
@@ -170,6 +171,7 @@ def train_lego_model(
     lens_aux: bool = False,
     lens_aux_weight: float = 0.3,
     lens_aux_weighting: Literal["uniform", "linear"] = "uniform",
+    lens_aux_mode: Literal["answer", "all-positions"] = "answer",
     early_stop_patience: int | None = 2000,
     log_every_steps: int = 100,
     eval_every_steps: int = 500,
@@ -255,14 +257,23 @@ def train_lego_model(
             step_lens_loss = torch.tensor(0.0, device=device)
             if lens_aux:
                 assert residuals is not None
-                step_lens_loss = compute_lens_aux_loss(
-                    residuals,
-                    input_ids,
-                    answer_positions,
-                    model.final_norm,
-                    model.tok_emb.weight,
-                    weighting=lens_aux_weighting,
-                )
+                if lens_aux_mode == "all-positions":
+                    step_lens_loss = compute_lens_aux_loss_all_positions(
+                        residuals,
+                        input_ids,
+                        model.final_norm,
+                        model.tok_emb.weight,
+                        weighting=lens_aux_weighting,
+                    )
+                else:
+                    step_lens_loss = compute_lens_aux_loss(
+                        residuals,
+                        input_ids,
+                        answer_positions,
+                        model.final_norm,
+                        model.tok_emb.weight,
+                        weighting=lens_aux_weighting,
+                    )
                 aux_loss = aux_loss + lens_aux_weight * step_lens_loss
 
             loss = base_loss + aux_loss
