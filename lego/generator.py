@@ -2,9 +2,6 @@
 
 Supports multiple finite groups for the LEGO composition task:
   - S3: Symmetric group on 3 elements (6 elements, non-abelian, solvable)
-  - S4: Symmetric group on 4 elements (24 elements, non-abelian, solvable)
-  - A5: Alternating group on 5 elements (60 elements, simple, non-solvable)
-  - S5: Symmetric group on 5 elements (120 elements, non-abelian, non-solvable)
 
 Each example is a chain: a starting element followed by k group operations.
 The model must output the result of composing all operations in sequence.
@@ -22,15 +19,13 @@ Example (k=3, S3):
     <start> r <op> s <op> r2 <predict> [answer]
 """
 
-import itertools
-import math
 import random
 from collections.abc import Iterator
 from typing import Literal, NamedTuple
 
 # --- Group definitions ---
 
-GroupName = Literal["S3", "S4", "A5", "S5"]
+GroupName = Literal["S3"]
 
 
 class Group(NamedTuple):
@@ -61,24 +56,6 @@ def _compose_perm(a: tuple[int, ...], b: tuple[int, ...]) -> tuple[int, ...]:
     return tuple(a[b[i]] for i in range(len(a)))
 
 
-def _perm_sign(perm: tuple[int, ...]) -> int:
-    """Compute the sign of a permutation (+1 for even, -1 for odd)."""
-    n = len(perm)
-    visited = [False] * n
-    sign = 1
-    for i in range(n):
-        if not visited[i]:
-            cycle_len = 0
-            j = i
-            while not visited[j]:
-                visited[j] = True
-                j = perm[j]
-                cycle_len += 1
-            if cycle_len % 2 == 0:
-                sign *= -1
-    return sign
-
-
 def _perm_label(perm: tuple[int, ...]) -> str:
     """Generate a compact label for a permutation.
 
@@ -104,32 +81,6 @@ def _perm_label(perm: tuple[int, ...]) -> str:
     return "".join(cycles)
 
 
-def _build_symmetric_group(n: int) -> Group:
-    """Build the symmetric group Sₙ on {0, 1, ..., n-1}."""
-    all_perms = sorted(itertools.permutations(range(n)))
-    assert len(all_perms) == math.factorial(n)
-    elements = [_perm_label(p) for p in all_perms]
-    cayley = [
-        [_perm_to_index(_compose_perm(a, b), all_perms) for b in all_perms]
-        for a in all_perms
-    ]
-    return Group(name=f"S{n}", elements=elements, cayley=cayley)
-
-
-def _build_alternating_group(n: int) -> Group:
-    """Build the alternating group Aₙ (even permutations of {0, ..., n-1})."""
-    all_perms = sorted(
-        p for p in itertools.permutations(range(n)) if _perm_sign(p) == 1
-    )
-    assert len(all_perms) == math.factorial(n) // 2
-    elements = [_perm_label(p) for p in all_perms]
-    cayley = [
-        [_perm_to_index(_compose_perm(a, b), all_perms) for b in all_perms]
-        for a in all_perms
-    ]
-    return Group(name=f"A{n}", elements=elements, cayley=cayley)
-
-
 # S3 with the original element ordering (e, r, r2, s, rs, r2s) for
 # backward compatibility with existing checkpoints and tests.
 _S3_PERMS = [
@@ -150,17 +101,7 @@ S3 = Group(
     ],
 )
 
-# Pre-built groups
-S4 = _build_symmetric_group(4)
-A5 = _build_alternating_group(5)
-S5 = _build_symmetric_group(5)
-
-GROUPS: dict[GroupName, Group] = {
-    "S3": S3,
-    "S4": S4,
-    "A5": A5,
-    "S5": S5,
-}
+GROUPS: dict[GroupName, Group] = {"S3": S3}
 
 # --- Legacy aliases for S3 (used by existing code) ---
 ELEMENTS: list[str] = S3.elements

@@ -8,23 +8,16 @@ import torch
 from lego.data import (
     S3FixedDataset,
     collate_s3,
-    compute_alignment_loss,
     compute_answer_accuracy,
-    compute_full_sequence_loss,
-    compute_loss,
-    compute_repulsion_loss,
+    compute_answer_only_loss,
     make_eval_batch,
 )
 from lego.generator import (
-    A5,
     CAYLEY,
     ELEMENTS,
     GROUPS,
     N_ELEMENTS,
     S3,
-    S4,
-    S5,
-    Group,
     S3Example,
     compose,
     generate_example,
@@ -449,7 +442,7 @@ class TestComputeLoss:
         logits = torch.randn(batch_size, sl, VOCAB_SIZE)
         input_ids = torch.randint(0, VOCAB_SIZE, (batch_size, sl))
         answer_positions = torch.full((batch_size,), answer_position(6))
-        loss = compute_loss(logits, input_ids, answer_positions)
+        loss = compute_answer_only_loss(logits, input_ids, answer_positions)
         assert loss.shape == ()
         assert loss.item() > 0
 
@@ -468,59 +461,9 @@ class TestComputeLoss:
                 answer_position(4),
             ]
         )
-        loss = compute_loss(logits, input_ids, answer_positions)
+        loss = compute_answer_only_loss(logits, input_ids, answer_positions)
         assert loss.shape == ()
         assert loss.item() > 0
-
-
-class TestComputeFullSequenceLoss:
-    def test_scalar_output(self) -> None:
-        batch_size = 4
-        sl = seq_len(6)
-        logits = torch.randn(batch_size, sl, VOCAB_SIZE)
-        input_ids = torch.randint(0, VOCAB_SIZE, (batch_size, sl))
-        loss = compute_full_sequence_loss(logits, input_ids)
-        assert loss.shape == ()
-        assert loss.item() > 0
-
-    def test_ignores_pad_targets(self) -> None:
-        """Loss should ignore positions where target is PAD (0)."""
-        batch_size = 2
-        sl = seq_len(6)
-        logits = torch.randn(batch_size, sl, VOCAB_SIZE)
-        # Sequence with padding after answer
-        input_ids = torch.zeros(batch_size, sl, dtype=torch.long)
-        # Only fill first 8 positions (k=2: seq_len=8)
-        input_ids[:, :8] = torch.randint(1, VOCAB_SIZE, (batch_size, 8))
-        loss = compute_full_sequence_loss(logits, input_ids)
-        assert loss.shape == ()
-        assert loss.item() > 0
-
-    def test_compute_loss_dispatches(self) -> None:
-        """compute_loss(full_sequence=True) uses full-sequence mode."""
-        batch_size = 4
-        sl = seq_len(6)
-        logits = torch.randn(batch_size, sl, VOCAB_SIZE)
-        input_ids = torch.randint(1, VOCAB_SIZE, (batch_size, sl))
-        answer_positions = torch.full(
-            (batch_size,),
-            answer_position(6),
-        )
-        loss_answer = compute_loss(
-            logits,
-            input_ids,
-            answer_positions,
-            full_sequence=False,
-        )
-        loss_full = compute_loss(
-            logits,
-            input_ids,
-            answer_positions,
-            full_sequence=True,
-        )
-        # Both should be valid losses but generally different
-        assert loss_answer.shape == ()
-        assert loss_full.shape == ()
 
 
 class TestComputeAnswerAccuracy:
@@ -562,137 +505,34 @@ class TestMakeEvalBatch:
         assert (batch["answer_position"] == answer_position(3)).all()
 
 
-# ---- Multi-group tests ----
+# ---- Tokenizer class tests ----
 
 
-class TestGroupAxioms:
-    """Verify group axioms hold for all supported groups."""
+class TestTokenizerClass:
+    """Test the Tokenizer class (S3)."""
 
-    @pytest.mark.parametrize("group", [S3, S4, A5, S5], ids=lambda g: g.name)
-    def test_correct_order(self, group: Group) -> None:
-        """Groups have the expected number of elements."""
-        expected = {"S3": 6, "S4": 24, "A5": 60, "S5": 120}
-        assert group.order == expected[group.name]
+    def test_vocab_size(self) -> None:
+        tok = Tokenizer(S3)
+        assert tok.vocab_size == S3.order + 4
 
-    @pytest.mark.parametrize("group", [S3, S4, A5, S5], ids=lambda g: g.name)
-    def test_identity(self, group: Group) -> None:
-        """Element 0 is the identity (e)."""
-        for x in range(group.order):
-            assert compose(0, x, group) == x
-            assert compose(x, 0, group) == x
-
-    @pytest.mark.parametrize("group", [S3, S4, A5, S5], ids=lambda g: g.name)
-    def test_closure(self, group: Group) -> None:
-        """All products are valid elements."""
-        for a in range(group.order):
-            for b in range(group.order):
-                result = compose(a, b, group)
-                assert 0 <= result < group.order
-
-    @pytest.mark.parametrize("group", [S3, S4, A5, S5], ids=lambda g: g.name)
-    def test_latin_square(self, group: Group) -> None:
-        """Each row/column of Cayley table is a permutation (no repeats)."""
-        elts = set(range(group.order))
-        for a in range(group.order):
-            row = {compose(a, b, group) for b in range(group.order)}
-            col = {compose(b, a, group) for b in range(group.order)}
-            assert row == elts, f"Row {group.elements[a]} not a permutation"
-            assert col == elts, f"Col {group.elements[a]} not a permutation"
-
-    @pytest.mark.parametrize("group", [S3, S4, A5, S5], ids=lambda g: g.name)
-    def test_associativity_sample(self, group: Group) -> None:
-        """Spot-check associativity on random triples."""
-        rng = random.Random(42)
-        for _ in range(200):
-            a = rng.randint(0, group.order - 1)
-            b = rng.randint(0, group.order - 1)
-            c = rng.randint(0, group.order - 1)
-            ab_c = compose(compose(a, b, group), c, group)
-            a_bc = compose(a, compose(b, c, group), group)
-            assert ab_c == a_bc
-
-    @pytest.mark.parametrize("group", [S3, S4, A5, S5], ids=lambda g: g.name)
-    def test_inverses(self, group: Group) -> None:
-        """Every element has an inverse."""
-        for a in range(group.order):
-            found = False
-            for x in range(group.order):
-                if compose(x, a, group) == 0:
-                    assert compose(a, x, group) == 0
-                    found = True
-                    break
-            assert found, f"{group.elements[a]} has no inverse"
-
-    @pytest.mark.parametrize("group", [S3, S4, A5, S5], ids=lambda g: g.name)
-    def test_non_abelian(self, group: Group) -> None:
-        """All our groups are non-abelian."""
-        found_non_commuting = False
-        for a in range(group.order):
-            for b in range(group.order):
-                if compose(a, b, group) != compose(b, a, group):
-                    found_non_commuting = True
-                    break
-            if found_non_commuting:
-                break
-        assert found_non_commuting
-
-    @pytest.mark.parametrize("group", [S3, S4, A5, S5], ids=lambda g: g.name)
-    def test_identity_label(self, group: Group) -> None:
-        """First element is labeled 'e' (identity)."""
-        assert group.elements[0] == "e"
-
-
-class TestGroupGeneration:
-    """Test example generation with non-S3 groups."""
-
-    @pytest.mark.parametrize("group", [S3, S4, A5, S5], ids=lambda g: g.name)
-    def test_generate_and_verify(self, group: Group) -> None:
-        rng = random.Random(42)
-        for _ in range(20):
-            k = rng.randint(0, 6)
-            ex = generate_example(k, rng, group)
-            assert verify_trajectory(ex, group)
-            assert 0 <= ex.start < group.order
-            for op in ex.ops:
-                assert 0 <= op < group.order
-
-    @pytest.mark.parametrize("group", [S4, A5, S5], ids=lambda g: g.name)
-    def test_stream_non_s3(self, group: Group) -> None:
-        examples = list(generate_stream(1, 4, 50, group=group))
-        assert len(examples) == 50
-        for ex in examples:
-            assert verify_trajectory(ex, group)
-
-
-class TestTokenizerMultiGroup:
-    """Test Tokenizer class with different groups."""
-
-    @pytest.mark.parametrize("group", [S3, S4, A5, S5], ids=lambda g: g.name)
-    def test_vocab_size(self, group: Group) -> None:
-        tok = Tokenizer(group)
-        assert tok.vocab_size == group.order + 4
-
-    @pytest.mark.parametrize("group", [S3, S4, A5, S5], ids=lambda g: g.name)
-    def test_element_roundtrip(self, group: Group) -> None:
-        tok = Tokenizer(group)
-        for idx in range(group.order):
+    def test_element_roundtrip(self) -> None:
+        tok = Tokenizer(S3)
+        for idx in range(S3.order):
             token = tok.element_token(idx)
             assert tok.element_index(token) == idx
             assert tok.is_element_token(token)
 
-    @pytest.mark.parametrize("group", [S3, S4, A5, S5], ids=lambda g: g.name)
-    def test_special_tokens_not_elements(self, group: Group) -> None:
-        tok = Tokenizer(group)
+    def test_special_tokens_not_elements(self) -> None:
+        tok = Tokenizer(S3)
         assert not tok.is_element_token(tok.pad_id)
         assert not tok.is_element_token(tok.start_token)
         assert not tok.is_element_token(tok.op_token)
         assert not tok.is_element_token(tok.predict_token)
 
-    @pytest.mark.parametrize("group", [S3, S4, A5, S5], ids=lambda g: g.name)
-    def test_encode_decode_roundtrip(self, group: Group) -> None:
-        tok = Tokenizer(group)
+    def test_encode_decode_roundtrip(self) -> None:
+        tok = Tokenizer(S3)
         rng = random.Random(42)
-        ex = generate_example(3, rng, group)
+        ex = generate_example(3, rng, S3)
         tokens = tok.encode(ex)
         assert len(tokens) == seq_len(3)
         decoded = tok.decode(tokens)
@@ -700,204 +540,13 @@ class TestTokenizerMultiGroup:
         assert "<predict>" in decoded
 
     def test_no_token_overlap(self) -> None:
-        """Token IDs don't collide for any group."""
+        """Token IDs don't collide."""
         for group in GROUPS.values():
             tok = Tokenizer(group)
             all_ids = {tok.pad_id, tok.start_token, tok.op_token, tok.predict_token}
             for idx in range(group.order):
                 all_ids.add(tok.element_token(idx))
             assert len(all_ids) == tok.vocab_size
-
-
-class TestDataPipelineMultiGroup:
-    """Test data pipeline with non-S3 groups."""
-
-    def test_fixed_dataset_s4(self) -> None:
-        tok = Tokenizer(S4)
-        examples = generate_fixed_dataset(3, 10, group=S4)
-        ds = S3FixedDataset(examples, k_max=4, tokenizer=tok)
-        assert len(ds) == 10
-        item = ds[0]
-        assert item["input_ids"].shape == (seq_len(4),)
-
-    def test_eval_batch_s5(self) -> None:
-        tok = Tokenizer(S5)
-        examples = generate_fixed_dataset(2, 10, group=S5)
-        batch = make_eval_batch(examples, k_max=4, tokenizer=tok)
-        assert batch["input_ids"].shape == (10, seq_len(4))
-        # All element tokens should be within vocab range
-        assert batch["input_ids"].max() < tok.vocab_size
-
-
-# ---- Alignment and repulsion loss tests ----
-
-
-class TestComputeAlignmentLoss:
-    """Test soft alignment auxiliary loss."""
-
-    def test_scalar_output(self) -> None:
-        """Alignment loss returns a scalar with gradients."""
-        dim, vocab_size, n_layers = 16, 10, 3
-        batch_size, seq = 4, 8
-        residuals = [
-            torch.randn(batch_size, seq, dim, requires_grad=True)
-            for _ in range(n_layers)
-        ]
-        input_ids = torch.randint(1, vocab_size, (batch_size, seq))
-        emb_weight = torch.randn(vocab_size, dim, requires_grad=True)
-        mean_loss, per_layer = compute_alignment_loss(
-            residuals,
-            input_ids,
-            emb_weight,
-            temperature=1.0,
-        )
-        assert mean_loss.shape == ()
-        assert len(per_layer) == n_layers
-        assert mean_loss.requires_grad
-
-    def test_per_layer_list_length(self) -> None:
-        """Per-layer list matches number of layers."""
-        for n_layers in [1, 4, 8]:
-            residuals = [torch.randn(2, 4, 8) for _ in range(n_layers)]
-            input_ids = torch.ones(2, 4, dtype=torch.long)
-            emb_weight = torch.randn(6, 8)
-            _, per_layer = compute_alignment_loss(
-                residuals,
-                input_ids,
-                emb_weight,
-            )
-            assert len(per_layer) == n_layers
-
-    def test_pad_positions_excluded(self) -> None:
-        """PAD positions should not contribute to loss."""
-        dim, vocab_size = 16, 10
-        residuals = [torch.randn(2, 4, dim)]
-        emb_weight = torch.randn(vocab_size, dim)
-        # Only position 0 is non-PAD
-        ids_mostly_pad = torch.zeros(2, 4, dtype=torch.long)
-        ids_mostly_pad[:, 0] = 1
-        # All non-PAD
-        ids_full = torch.ones(2, 4, dtype=torch.long)
-        loss_pad, _ = compute_alignment_loss(
-            residuals,
-            ids_mostly_pad,
-            emb_weight,
-        )
-        loss_full, _ = compute_alignment_loss(
-            residuals,
-            ids_full,
-            emb_weight,
-        )
-        # Both should produce valid scalars
-        assert loss_pad.shape == ()
-        assert loss_full.shape == ()
-        # Values should generally differ (different contributing positions)
-        # (not guaranteed for random data, but extremely unlikely to match)
-
-    def test_aligned_residuals_lower_loss(self) -> None:
-        """Residuals equal to an embedding should give lower loss."""
-        dim, vocab_size = 64, 10
-        torch.manual_seed(123)
-        # Use orthogonal embeddings so alignment is unambiguous
-        emb_weight = torch.eye(vocab_size, dim)
-        # Residuals that are copies of embedding[1] — perfectly aligned
-        aligned = emb_weight[1].unsqueeze(0).unsqueeze(0).expand(2, 4, -1).clone()
-        # Random residuals in directions orthogonal to all embeddings
-        random_res = torch.randn(2, 4, dim)
-        random_res[:, :, :vocab_size] = 0  # zero out embedding subspace
-        input_ids = torch.ones(2, 4, dtype=torch.long)
-        loss_aligned, _ = compute_alignment_loss(
-            [aligned],
-            input_ids,
-            emb_weight,
-        )
-        loss_random, _ = compute_alignment_loss(
-            [random_res],
-            input_ids,
-            emb_weight,
-        )
-        # Aligned should have lower loss (closer to embeddings)
-        assert loss_aligned < loss_random
-
-    def test_gradient_flows(self) -> None:
-        """Gradients flow through to residuals and embeddings."""
-        dim, vocab_size = 16, 10
-        residuals = [torch.randn(2, 4, dim, requires_grad=True)]
-        emb_weight = torch.randn(vocab_size, dim, requires_grad=True)
-        input_ids = torch.ones(2, 4, dtype=torch.long)
-        mean_loss, _ = compute_alignment_loss(
-            residuals,
-            input_ids,
-            emb_weight,
-        )
-        mean_loss.backward()
-        assert residuals[0].grad is not None
-        assert emb_weight.grad is not None
-
-
-class TestComputeRepulsionLoss:
-    """Test embedding repulsion auxiliary loss."""
-
-    def test_scalar_output(self) -> None:
-        """Repulsion loss returns a scalar with gradients."""
-        emb_weight = torch.randn(10, 16, requires_grad=True)
-        loss = compute_repulsion_loss(emb_weight, n_elements=6, margin=0.0)
-        assert loss.shape == ()
-        assert loss.requires_grad
-
-    def test_orthogonal_embeddings_zero_loss(self) -> None:
-        """Orthogonal element embeddings should give zero loss at margin=0."""
-        dim = 10
-        emb_weight = torch.zeros(10, dim)
-        # Element embeddings at indices 1-6: orthogonal unit vectors
-        for i in range(6):
-            emb_weight[i + 1, i] = 1.0
-        loss = compute_repulsion_loss(emb_weight, n_elements=6, margin=0.0)
-        assert loss.item() == pytest.approx(0.0, abs=1e-6)
-
-    def test_identical_embeddings_positive_loss(self) -> None:
-        """Identical element embeddings should give positive loss."""
-        emb_weight = torch.zeros(10, 16)
-        for i in range(6):
-            emb_weight[i + 1] = torch.ones(16)
-        loss = compute_repulsion_loss(emb_weight, n_elements=6, margin=0.0)
-        assert loss.item() > 0
-
-    def test_high_margin_reduces_loss(self) -> None:
-        """A margin of 1.0 (max cosine) should give zero loss."""
-        emb_weight = torch.randn(10, 16)
-        loss_0 = compute_repulsion_loss(
-            emb_weight,
-            n_elements=6,
-            margin=0.0,
-        )
-        loss_high = compute_repulsion_loss(
-            emb_weight,
-            n_elements=6,
-            margin=1.0,
-        )
-        # margin=1.0 means cos_sim must exceed 1.0 to be penalized,
-        # which is impossible, so loss should be 0
-        assert loss_high.item() == pytest.approx(0.0, abs=1e-6)
-        assert loss_0 >= loss_high
-
-    def test_only_element_tokens(self) -> None:
-        """Loss only depends on element embeddings (indices 1-6), not special tokens."""
-        emb_weight = torch.randn(10, 16)
-        loss1 = compute_repulsion_loss(emb_weight, n_elements=6, margin=0.0)
-        # Modify special token embeddings (indices 0, 7, 8, 9)
-        emb_modified = emb_weight.clone()
-        emb_modified[0] *= 100
-        emb_modified[7:] *= 100
-        loss2 = compute_repulsion_loss(emb_modified, n_elements=6, margin=0.0)
-        assert loss1.item() == pytest.approx(loss2.item(), abs=1e-6)
-
-    def test_gradient_flows(self) -> None:
-        """Gradients flow through to embedding weights."""
-        emb_weight = torch.randn(10, 16, requires_grad=True)
-        loss = compute_repulsion_loss(emb_weight, n_elements=6, margin=0.0)
-        loss.backward()
-        assert emb_weight.grad is not None
 
 
 class TestLensAuxLoss:

@@ -1,28 +1,25 @@
-"""Training loop for LEGO group composition task.
+"""Training loop for LEGO group composition task (S3).
 
-Trains decoder-only transformers on group composition chains.
+Trains decoder-only transformers on S3 group composition chains.
 Measures per-chain-length accuracy to track how many sequential
 composition steps the model has learned.
 
 Usage:
-    # Smoke test (tiny model, S3)
+    # Smoke test (tiny model)
     uv run python -m lego.train \
         --k-max 3 --n-layers 4 --dim 64 --n-heads 2 \
         --generate-n 100000 --batch-size 64 --no-wandb
 
-    # Primary experiment (streaming, 6 hops, S3)
-    uv run python -m lego.train \
-        --k-max 6 --generate-n 5000000 --batch-size 512
+    # Baseline (streaming, 6 hops)
+    uv run python -m lego.train --k-max 6 --generate-n 10000000
 
-    # S5 experiment (larger model needed)
+    # With the lens auxiliary loss (deep supervision)
     uv run python -m lego.train \
-        --group S5 --dim 256 --n-heads 8 \
-        --generate-n 10000000 --batch-size 256
+        --k-max 6 --generate-n 10000000 --lens-aux --lens-aux-weight 0.3
 """
 
 import argparse
 from pathlib import Path
-from typing import get_args
 
 import torch
 from torch.utils.data import DataLoader, Dataset
@@ -34,10 +31,9 @@ from lego.data import (
     collate_s3,
 )
 from lego.generator import (
-    GroupName,
+    S3,
     generate_fixed_dataset,
     generate_mixed_dataset,
-    get_group,
 )
 from lego.model import (
     create_model,
@@ -49,15 +45,6 @@ from lego.training import train_lego_model
 def main() -> None:
     parser = argparse.ArgumentParser(
         description="Train LEGO group composition models",
-    )
-
-    # Group
-    parser.add_argument(
-        "--group",
-        type=str,
-        default="S3",
-        choices=list(get_args(GroupName)),
-        help="Group to use: S3 (6 elts), S4 (24), A5 (60), S5 (120)",
     )
 
     # Data
@@ -81,59 +68,13 @@ def main() -> None:
         default=None,
         help="Streaming mode: generate N examples, 1 epoch",
     )
-    parser.add_argument(
-        "--k-power",
-        type=float,
-        default=0.0,
-        help="Power for k-weighting: weight(k)=k^power. "
-        "0=uniform (default), 2=quadratic (k=6 gets 36x k=1)",
-    )
 
     # Model
-    parser.add_argument("--weight-shared", action="store_true")
     parser.add_argument("--dim", type=int, default=128)
     parser.add_argument("--n-heads", type=int, default=4)
     parser.add_argument("--n-layers", type=int, default=8)
-    parser.add_argument(
-        "--pos-encoding",
-        default="learned",
-        choices=["rope", "pope", "learned"],
-    )
-    parser.add_argument("--init-std", type=float, default=None)
 
     # Training
-    parser.add_argument(
-        "--loss-mode",
-        default="answer-only",
-        choices=["answer-only", "full-sequence"],
-        help=(
-            "answer-only: loss at answer position only. "
-            "full-sequence: autoregressive loss on all non-pad tokens."
-        ),
-    )
-    parser.add_argument(
-        "--staircase-loss",
-        action="store_true",
-        help=(
-            "Add auxiliary loss at <op> positions at specific layers, "
-            "targeting intermediate trajectory values. Forces sequential "
-            "algorithm where layer j computes trajectory[j]."
-        ),
-    )
-    parser.add_argument(
-        "--staircase-start-layer",
-        type=int,
-        default=0,
-        help=(
-            "First layer for staircase loss targets. 0 for 6L models, 1 for 7L models."
-        ),
-    )
-    parser.add_argument(
-        "--staircase-weight",
-        type=float,
-        default=1.0,
-        help="Weight for the staircase auxiliary loss.",
-    )
     parser.add_argument(
         "--lens-aux",
         action="store_true",
@@ -153,55 +94,6 @@ def main() -> None:
         default="uniform",
         choices=["uniform", "linear"],
         help="Layer weighting: uniform, or linear (CALM-style later-weighted).",
-    )
-    parser.add_argument(
-        "--align-loss",
-        action="store_true",
-        help=(
-            "Add soft alignment auxiliary loss encouraging residual stream "
-            "to stay near token embedding manifold at all layers."
-        ),
-    )
-    parser.add_argument(
-        "--align-weight",
-        type=float,
-        default=0.1,
-        help="Weight for the alignment auxiliary loss.",
-    )
-    parser.add_argument(
-        "--align-temp",
-        type=float,
-        default=1.0,
-        help="Temperature for alignment loss cosine similarity.",
-    )
-    parser.add_argument(
-        "--repel-loss",
-        action="store_true",
-        help=(
-            "Add embedding repulsion loss pushing element token "
-            "embeddings apart (cosine similarity)."
-        ),
-    )
-    parser.add_argument(
-        "--repel-weight",
-        type=float,
-        default=0.1,
-        help="Weight for the embedding repulsion loss.",
-    )
-    parser.add_argument(
-        "--repel-margin",
-        type=float,
-        default=0.0,
-        help="Cosine similarity margin for repulsion loss.",
-    )
-    parser.add_argument(
-        "--repel-all-tokens",
-        action="store_true",
-        help=(
-            "Apply repulsion to all tokens (including PAD and special), "
-            "not just element tokens. Prevents PAD from becoming an "
-            "alignment attractor."
-        ),
     )
     parser.add_argument("--n-epochs", type=int, default=200)
     parser.add_argument("--batch-size", type=int, default=512)
@@ -244,11 +136,10 @@ def main() -> None:
     parser.add_argument("--no-compile", action="store_true")
     args = parser.parse_args()
 
-    # Group and tokenizer
-    group_name: GroupName = args.group
-    group = get_group(group_name)
+    # Group and tokenizer (S3 only)
+    group = S3
     tokenizer = Tokenizer(group)
-    print(f"Group: {group_name} ({group.order} elements, vocab={tokenizer.vocab_size})")
+    print(f"Group: {group.name} ({group.order} elements, vocab={tokenizer.vocab_size})")
 
     # Device
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -265,20 +156,9 @@ def main() -> None:
         n_train=n_train,
         n_test=args.n_test,
         generate_n=args.generate_n,
-        loss_mode=args.loss_mode,
-        staircase_loss=args.staircase_loss,
-        staircase_start_layer=args.staircase_start_layer,
-        staircase_weight=args.staircase_weight,
         lens_aux=args.lens_aux,
         lens_aux_weight=args.lens_aux_weight,
         lens_aux_weighting=args.lens_aux_weighting,
-        align_loss=args.align_loss,
-        align_weight=args.align_weight,
-        align_temp=args.align_temp,
-        repel_loss=args.repel_loss,
-        repel_weight=args.repel_weight,
-        repel_margin=args.repel_margin,
-        repel_all_tokens=args.repel_all_tokens,
         batch_size=args.batch_size,
         lr=args.lr,
         weight_decay=args.weight_decay,
@@ -295,19 +175,16 @@ def main() -> None:
     )
 
     model_config = lego_model_config(
-        weight_shared=args.weight_shared,
         dim=args.dim,
         n_heads=args.n_heads,
         n_layers=args.n_layers,
-        pos_encoding=args.pos_encoding,
-        init_std=args.init_std,
         vocab_size=tokenizer.vocab_size,
     )
 
     # Run name — resolve and preflight the checkpoint namespace *before* the
     # expensive data generation / model build, so a reused name fails in seconds.
     run_name = args.wandb_run_name or (
-        f"{group_name}_{'ws' if args.weight_shared else 'std'}"
+        f"{group.name}_std"
         f"_{args.dim}d_{args.n_heads}h_{args.n_layers}L"
         f"_k{args.k_min}-{args.k_max}"
     )
@@ -333,7 +210,6 @@ def main() -> None:
             args.k_max,
             args.generate_n,
             seed=args.seed + 100,
-            k_power=args.k_power,
             group=group,
             tokenizer=tokenizer,
         )
@@ -365,35 +241,10 @@ def main() -> None:
     model = create_model(model_config)
     model = model.to(device)
 
-    # Validation
-    if config.staircase_loss and config.align_loss:
-        parser.error(
-            "--staircase-loss and --align-loss are mutually exclusive. "
-            "Staircase is supervised (targets specific trajectory values); "
-            "alignment is unsupervised (pushes toward embedding manifold)."
-        )
-
-    print(f"\nLoss mode: {config.loss_mode}")
-    if config.staircase_loss:
-        print(
-            f"Staircase loss: enabled (start_layer={config.staircase_start_layer}, "
-            f"weight={config.staircase_weight})"
-        )
     if config.lens_aux:
         print(
             f"Lens aux loss: enabled (weight={config.lens_aux_weight}, "
             f"weighting={config.lens_aux_weighting})"
-        )
-    if config.align_loss:
-        print(
-            f"Alignment loss: enabled (weight={config.align_weight}, "
-            f"temp={config.align_temp})"
-        )
-    if config.repel_loss:
-        scope = "all tokens" if config.repel_all_tokens else "elements only"
-        print(
-            f"Repulsion loss: enabled (weight={config.repel_weight}, "
-            f"margin={config.repel_margin}, {scope})"
         )
     print(f"Training for {config.n_epochs} epoch(s) ({total_steps} steps)")
     print(f"Steps per epoch: {steps_per_epoch}")
@@ -417,20 +268,9 @@ def main() -> None:
         weight_decay=config.weight_decay,
         lr_schedule=config.lr_schedule,
         use_compile=not args.no_compile,
-        full_sequence_loss=(config.loss_mode == "full-sequence"),
-        staircase_loss=config.staircase_loss,
-        staircase_start_layer=config.staircase_start_layer,
-        staircase_weight=config.staircase_weight,
         lens_aux=config.lens_aux,
         lens_aux_weight=config.lens_aux_weight,
         lens_aux_weighting=config.lens_aux_weighting,
-        align_loss=config.align_loss,
-        align_weight=config.align_weight,
-        align_temp=config.align_temp,
-        repel_loss=config.repel_loss,
-        repel_weight=config.repel_weight,
-        repel_margin=config.repel_margin,
-        repel_all_tokens=config.repel_all_tokens,
         early_stop_patience=None,
         log_every_steps=config.log_every_steps,
         eval_every_steps=config.eval_every_steps,
@@ -443,7 +283,7 @@ def main() -> None:
         wandb_config={
             "model": model_config.model_dump(),
             "training": config.model_dump(),
-            "group": group_name,
+            "group": group.name,
         },
         tokenizer=tokenizer,
     )

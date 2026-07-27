@@ -1,62 +1,18 @@
 """Configuration for model architecture and LEGO training."""
 
-from typing import Literal, TypedDict
+from typing import Literal
 
 from pydantic import BaseModel, computed_field, model_validator
-
-
-class HeadlineModelSpec(TypedDict):
-    """Specification for a headline LEGO model (Phase 9 results)."""
-
-    label: str
-    short: str
-    weight_shared: bool
-    dim: int
-    n_heads: int
-    n_layers: int
-
-
-HEADLINE_MODELS: list[HeadlineModelSpec] = [
-    {
-        "label": "Large Standard (128d/4h/8L)",
-        "short": "std_128d",
-        "weight_shared": False,
-        "dim": 128,
-        "n_heads": 4,
-        "n_layers": 8,
-    },
-    {
-        "label": "Small Standard (48d/3h/8L)",
-        "short": "std_48d",
-        "weight_shared": False,
-        "dim": 48,
-        "n_heads": 3,
-        "n_layers": 8,
-    },
-    {
-        "label": "Large WS (256d/8h/8L)",
-        "short": "ws_256d",
-        "weight_shared": True,
-        "dim": 256,
-        "n_heads": 8,
-        "n_layers": 8,
-    },
-    {
-        "label": "Small WS (96d/6h/8L)",
-        "short": "ws_96d",
-        "weight_shared": True,
-        "dim": 96,
-        "n_heads": 6,
-        "n_layers": 8,
-    },
-]
 
 
 class ModelConfig(BaseModel):
     """Model architecture configuration.
 
     No defaults — always construct via lego_model_config() or deserialize
-    from a checkpoint dict.
+    from a checkpoint dict. The architecture itself is fixed: pre-norm
+    LayerNorm blocks, learned positional embeddings, GELU MLP, tied
+    embeddings, PyTorch-default init. Checkpoints from older code may
+    contain extra architecture-selection keys; pydantic ignores them.
     """
 
     dim: int
@@ -65,32 +21,13 @@ class ModelConfig(BaseModel):
     intermediate_dim: int
     vocab_size: int
     max_seq_len: int
-    rope_theta: float = 100000.0
     norm_eps: float = 1e-5
-    weight_shared: bool
-    use_iteration_embed: bool
-    use_input_injection: bool
     dropout: float
-    pos_encoding: Literal["rope", "pope", "learned"]
-    norm_type: Literal["rmsnorm", "layernorm"]
-    activation: Literal["swiglu", "gelu"]
-    # None = PyTorch default (Kaiming). 0.02 is standard for LLMs but too
-    # small for bAbI-scale models (attention scores ~0.05 std, too flat).
-    init_std: float | None
 
     @model_validator(mode="after")
     def _validate_architecture(self) -> "ModelConfig":
         if self.dim % self.n_heads != 0:
             msg = f"dim ({self.dim}) must be divisible by n_heads ({self.n_heads})"
-            raise ValueError(msg)
-        if (
-            self.pos_encoding in ("rope", "pope")
-            and (self.dim // self.n_heads) % 2 != 0
-        ):
-            msg = (
-                f"head_dim ({self.dim // self.n_heads}) must be even "
-                f"for {self.pos_encoding}"
-            )
             raise ValueError(msg)
         return self
 
@@ -101,17 +38,10 @@ class ModelConfig(BaseModel):
 
 
 def lego_model_config(
-    weight_shared: bool = False,
     dim: int = 128,
     n_heads: int = 4,
     n_layers: int = 8,
-    pos_encoding: Literal["rope", "pope", "learned"] = "learned",
-    norm_type: Literal["rmsnorm", "layernorm"] = "layernorm",
-    activation: Literal["swiglu", "gelu"] = "gelu",
-    init_std: float | None = None,
     dropout: float = 0.0,
-    use_iteration_embed: bool = True,
-    use_input_injection: bool = False,
     vocab_size: int | None = None,
 ) -> ModelConfig:
     """Create ModelConfig for LEGO experiments.
@@ -131,14 +61,7 @@ def lego_model_config(
         intermediate_dim=dim * 4,
         vocab_size=vocab_size,
         max_seq_len=128,  # plenty of room for any k_max
-        weight_shared=weight_shared,
-        use_iteration_embed=use_iteration_embed and weight_shared,
-        use_input_injection=use_input_injection and weight_shared,
         dropout=dropout,
-        pos_encoding=pos_encoding,
-        norm_type=norm_type,
-        activation=activation,
-        init_std=init_std,
     )
 
 
@@ -156,23 +79,11 @@ class LegoTrainingConfig(BaseModel):
     # Fixed dataset mode (ignored when generate_n is set)
     n_train: int = 100_000
 
-    # Training
-    loss_mode: Literal["answer-only", "full-sequence"] = "answer-only"
-    staircase_loss: bool = False
-    staircase_start_layer: int = 0
-    staircase_weight: float = 1.0
-    # grok_lens-style deep supervision at the answer position (Phase 5)
+    # Training: answer-only cross-entropy at the <predict> position,
+    # optionally with grok_lens-style deep supervision (Phase 5)
     lens_aux: bool = False
     lens_aux_weight: float = 0.3
     lens_aux_weighting: Literal["uniform", "linear"] = "uniform"
-    # Alignment auxiliary losses
-    align_loss: bool = False
-    align_weight: float = 0.1
-    align_temp: float = 1.0
-    repel_loss: bool = False
-    repel_weight: float = 0.1
-    repel_margin: float = 0.0
-    repel_all_tokens: bool = False
     batch_size: int = 512
     lr: float = 3e-4
     weight_decay: float = 0.0
