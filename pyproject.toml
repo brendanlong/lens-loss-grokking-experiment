@@ -52,3 +52,4 @@ exclude = [
 
 [tool.ruff.lint.isort]
 known-first-party = ["common", "grok_lens", "lego"]
+known-third-party = ["wandb"]  # local wandb/ run dir must not flip classification vs CI

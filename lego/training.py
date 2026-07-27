@@ -11,9 +11,9 @@ from pathlib import Path
 from typing import Literal
 
 import torch
+import wandb
 from torch.utils.data import DataLoader
 
-import wandb
 from common.checkpoint import (
     save_model_checkpoint as _save_checkpoint,
 )
