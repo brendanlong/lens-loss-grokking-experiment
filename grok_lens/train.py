@@ -35,7 +35,7 @@ from grok_lens.model import (
     grok_lens_loss,
     intermediate_layer_weights,
 )
-from grok_lens.muon import Muon, split_muon_params
+from grok_lens.muon import split_muon_params
 
 EXPERIMENT = "grok_lens"
 
@@ -117,7 +117,7 @@ def train_grok_model(
         # Order matters below: the last optimizer's scheduler is the one
         # whose lr gets logged (the AdamW group, matching the baseline arm).
         optimizers: list[torch.optim.Optimizer] = [
-            Muon(
+            torch.optim.Muon(
                 muon_params,
                 lr=config.muon_lr,
                 momentum=config.muon_momentum,
@@ -243,6 +243,11 @@ def main() -> None:
     # Model
     parser.add_argument("--p", type=int, default=113, help="Modulus")
     parser.add_argument(
+        "--no-layernorm",
+        action="store_true",
+        help="Nanda et al.'s LN-free architecture (control; see RESULTS.md)",
+    )
+    parser.add_argument(
         "--task",
         default="add",
         choices=["add", "sub"],
@@ -345,6 +350,7 @@ def main() -> None:
         model_config = GrokModelConfig(
             p=args.p,
             task=args.task,
+            layernorm=not args.no_layernorm,
             dim=args.dim,
             n_heads=args.n_heads,
             n_layers=args.n_layers,

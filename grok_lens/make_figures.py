@@ -18,6 +18,7 @@ Usage:
 """
 
 import argparse
+import re
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -70,8 +71,6 @@ def load_model_and_test(
     model = GrokTransformer(cfg)
     model.load_state_dict(ckpt["model_state_dict"])
     model.eval()
-    import re
-
     seed = int(re.search(r"-s(\d+)", name).group(1))  # type: ignore[union-attr]
     _, _, tokens, targets = train_test_split(cfg, 0.3, seed)
     return model, cfg, tokens, targets

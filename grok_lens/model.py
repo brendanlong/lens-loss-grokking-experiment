@@ -22,9 +22,9 @@ class Block(nn.Module):
 
     def __init__(self, config: GrokModelConfig) -> None:
         super().__init__()
-        self.ln1 = nn.LayerNorm(config.dim)
+        self.ln1 = nn.LayerNorm(config.dim) if config.layernorm else nn.Identity()
         self.attn = nn.MultiheadAttention(config.dim, config.n_heads, batch_first=True)
-        self.ln2 = nn.LayerNorm(config.dim)
+        self.ln2 = nn.LayerNorm(config.dim) if config.layernorm else nn.Identity()
         self.mlp = nn.Sequential(
             nn.Linear(config.dim, config.mlp_ratio * config.dim),
             nn.ReLU(),
@@ -46,12 +46,19 @@ class GrokTransformer(nn.Module):
     def __init__(self, config: GrokModelConfig) -> None:
         super().__init__()
         self.config = config
+        # Initialization: PyTorch defaults for all weights, plus std-0.02
+        # learned positions. This is NOT Nanda et al.'s custom init; grokking
+        # phenomenology is insensitive to this choice and our baselines
+        # reproduce the canonical curves (RESULTS.md Phase 1).
         self.embed = nn.Embedding(config.vocab_size, config.dim)
         self.pos_embed = nn.Parameter(torch.zeros(SEQ_LEN, config.dim))
         nn.init.normal_(self.pos_embed, std=0.02)
         self.blocks = nn.ModuleList(Block(config) for _ in range(config.n_layers))
-        self.ln_f = nn.LayerNorm(config.dim)
+        self.ln_f = nn.LayerNorm(config.dim) if config.layernorm else nn.Identity()
         self.unembed = nn.Linear(config.dim, config.vocab_size, bias=False)
+        # nn.MultiheadAttention has no built-in causal masking: its
+        # ``is_causal`` argument is only an optimization hint and still
+        # requires an explicit mask for correctness, so we register one.
         self.register_buffer(
             "causal_mask",
             torch.triu(torch.ones(SEQ_LEN, SEQ_LEN, dtype=torch.bool), diagonal=1),
@@ -69,6 +76,8 @@ class GrokTransformer(nn.Module):
         answer_resids: list[torch.Tensor] = []
         for block in self.blocks:
             x = block(x, self.causal_mask)
+            # [:, -1] selects the LAST sequence position (the "=" token,
+            # where the answer is predicted) — not a reversal.
             answer_resids.append(x[:, -1])
         resids = torch.stack(answer_resids)  # [L, B, dim]
         return self.unembed(self.ln_f(resids))

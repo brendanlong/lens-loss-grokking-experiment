@@ -9,6 +9,7 @@ and are downloaded on demand into the local HF cache.
 from pathlib import Path
 
 import torch
+from huggingface_hub import hf_hub_download
 
 HF_DATASET = "brendanlong/lens-loss-grokking-experiment"
 
@@ -49,8 +50,6 @@ def artifact_path(relpath: str) -> Path:
     ``relpath`` is e.g. ``grok_lens/<run_name>/final.pt`` or
     ``lego/<run_name>/step_39000.pt``. Files are cached by huggingface_hub.
     """
-    from huggingface_hub import hf_hub_download
-
     return Path(
         hf_hub_download(repo_id=HF_DATASET, repo_type="dataset", filename=relpath)
     )

@@ -141,18 +141,6 @@ class TestLoss:
 
 
 class TestMuon:
-    def test_newton_schulz_approximately_orthogonalizes(self) -> None:
-        from grok_lens.muon import zeropower_via_newtonschulz5
-
-        torch.manual_seed(0)
-        for shape in [(16, 32), (32, 16), (16, 16)]:
-            grad = torch.randn(*shape)
-            out = zeropower_via_newtonschulz5(grad)
-            assert out.shape == grad.shape
-            # Quintic NS leaves singular values near 1 (roughly [0.7, 1.3])
-            svals = torch.linalg.svdvals(out)
-            assert (svals > 0.5).all() and (svals < 1.5).all()
-
     def test_param_split_partitions_model(self) -> None:
         from grok_lens.muon import split_muon_params
 
@@ -169,7 +157,7 @@ class TestMuon:
         assert id(model.pos_embed) in adamw_ids
 
     def test_muon_step_reduces_loss(self) -> None:
-        from grok_lens.muon import Muon, split_muon_params
+        from grok_lens.muon import split_muon_params
 
         torch.manual_seed(0)
         cfg = small_config()
@@ -178,7 +166,7 @@ class TestMuon:
         w = intermediate_layer_weights(cfg.n_layers, "uniform")
         muon_params, adamw_params = split_muon_params(model)
         optimizers = [
-            Muon(muon_params, lr=0.02, weight_decay=0.05),
+            torch.optim.Muon(muon_params, lr=0.02, weight_decay=0.05),
             torch.optim.AdamW(adamw_params, lr=1e-3, weight_decay=1.0),
         ]
 

@@ -28,6 +28,11 @@ class GrokModelConfig(BaseModel):
     """
 
     p: int = 113  # modulus; vocab is the p residues plus one "=" token
+    # Nanda et al. remove LayerNorm entirely for circuit legibility; we keep
+    # it by default (the logit lens needs ln_f to be the model's own
+    # readout). layernorm=False reproduces their LN-free architecture as a
+    # control (see RESULTS.md).
+    layernorm: bool = True
     # Task: a+b or a-b (mod p). Subtraction is the second-task generality
     # check — non-commutative, groks in the same regime (Power et al.), and
     # keeps the circuit basis on Z_p so all Fourier analyses port unchanged.
@@ -81,9 +86,11 @@ class GrokLensTrainingConfig(BaseTrainingConfig):
     # true answer token (per-layer cross-entropy) unless
     # aux_shuffled_targets is set.
     aux_weighting: Literal["uniform", "linear"] = "uniform"
-    # Specificity control: supervise intermediate layers against a FIXED
-    # random permutation of the train labels instead of the true answers —
-    # matched functional form/magnitude, but not answer-shaped.
+    # Specificity control (see RESULTS.md "Specificity controls"): supervise
+    # intermediate layers against a FIXED random permutation of the train
+    # labels instead of the true answers — matched functional form and
+    # magnitude, but not answer-shaped. Established that the stabilization
+    # effect belongs to answer-shaped supervision specifically.
     aux_shuffled_targets: bool = False
 
     # Optimization (canonical grokking settings)
