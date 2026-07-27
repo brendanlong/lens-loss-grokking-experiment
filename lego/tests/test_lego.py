@@ -9,6 +9,7 @@ from lego.data import (
     collate_s3,
     encode_trajectory,
     make_eval_batch,
+    make_k_uniform_sampler,
 )
 from lego.generator import (
     CAYLEY,
@@ -715,3 +716,35 @@ class TestLensAuxLossAllPositions:
         residuals[-1] = torch.randn(3, 6, 8)
         loss_b = compute_lens_aux_loss_all_positions(residuals, input_ids, norm, emb)
         assert torch.allclose(loss_a, loss_b)
+
+
+class TestKUniformSampler:
+    def test_k_distribution_uniform(self) -> None:
+        """Sampled k values are ~uniform even though the enumeration is
+        dominated by the largest k."""
+        train, _test = enumerate_split(0, 4, test_frac=0.2, seed=42)
+        dataset = ChainDataset(train, k_max=4)
+        sampler = make_k_uniform_sampler(dataset, seed=0)
+        ks = dataset.chain_lengths[torch.tensor(list(sampler))]
+        counts = torch.bincount(ks, minlength=5).float()
+        frac = counts / counts.sum()
+        # each of the 5 strata should get ~1/5 of draws
+        assert torch.all((frac > 0.15) & (frac < 0.25)), frac
+
+    def test_deterministic_given_seed(self) -> None:
+        train, _test = enumerate_split(0, 3, test_frac=0.2, seed=42)
+        dataset = ChainDataset(train, k_max=3)
+        a = list(make_k_uniform_sampler(dataset, seed=7))
+        b = list(make_k_uniform_sampler(dataset, seed=7))
+        c = list(make_k_uniform_sampler(dataset, seed=8))
+        assert a == b
+        assert a != c
+
+    def test_only_dataset_indices(self) -> None:
+        """Sampler indices stay within the train dataset (held-out examples
+        can never be drawn)."""
+        train, _test = enumerate_split(0, 3, test_frac=0.2, seed=42)
+        dataset = ChainDataset(train, k_max=3)
+        idx = list(make_k_uniform_sampler(dataset, seed=0))
+        assert len(idx) == len(dataset)
+        assert min(idx) >= 0 and max(idx) < len(dataset)

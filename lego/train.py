@@ -34,7 +34,7 @@ import torch
 from torch.utils.data import DataLoader
 
 from lego.config import LegoTrainingConfig, lego_model_config
-from lego.data import ChainDataset, collate_s3
+from lego.data import ChainDataset, collate_s3, make_k_uniform_sampler
 from lego.generator import S3, enumerate_split, group_by_k
 from lego.model import create_model
 from lego.tokenizer import Tokenizer
@@ -218,7 +218,7 @@ def main() -> None:
     train_loader = DataLoader(
         train_dataset,
         batch_size=config.batch_size,
-        shuffle=True,
+        sampler=make_k_uniform_sampler(train_dataset, seed=args.seed),
         collate_fn=collate_s3,
         drop_last=True,
         pin_memory=device.type == "cuda",

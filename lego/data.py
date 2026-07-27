@@ -89,6 +89,30 @@ class ChainDataset(Dataset[dict[str, Tensor]]):
         }
 
 
+def make_k_uniform_sampler(
+    dataset: ChainDataset,
+    seed: int,
+) -> torch.utils.data.WeightedRandomSampler:
+    """Sampler that draws chain length k uniformly (equal probability per
+    k-stratum), matching the old streaming generator's rng.randint(k_min,
+    k_max) training distribution.
+
+    The raw enumeration is ~83% k=6 with almost no short chains (k<=2 is
+    0.08% of chains for k_max=6), and models trained on that proportional
+    mix never lift off chance — the short-chain curriculum is required for
+    learning. Samples with replacement; weights cover this dataset only, so
+    held-out examples are never drawn.
+    """
+    k_counts = torch.bincount(dataset.chain_lengths)
+    sample_weights = (1.0 / k_counts.float())[dataset.chain_lengths]
+    return torch.utils.data.WeightedRandomSampler(
+        sample_weights.tolist(),
+        num_samples=len(dataset),
+        replacement=True,
+        generator=torch.Generator().manual_seed(seed),
+    )
+
+
 def collate_s3(batch: list[dict[str, Tensor]]) -> dict[str, Tensor]:
     """Collate batch of group composition examples."""
     return {
