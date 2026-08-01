@@ -70,14 +70,10 @@ def main() -> None:
         print(f"No runs matching {args.prefix}* in {args.project}")
         return
 
-    keys = ["train/answer_acc", "test_acc/mean"] + [
-        f"test_acc/k_{k}" for k in REPORT_KS
-    ]
     for run in runs:
-        hist = sorted(
-            run.history(keys=keys, pandas=False),
-            key=lambda h: h["_step"],
-        )
+        # scan_history: full resolution (history() samples to 500 rows,
+        # which silently under-counts dips).
+        hist = sorted(run.scan_history(), key=lambda h: h["_step"])
         train_steps, train_accs = series(hist, "train/answer_acc")
         memorize = next(
             (
