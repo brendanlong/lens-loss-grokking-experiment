@@ -207,6 +207,67 @@ steps: {L2, L3} × {λ=0, λ=0.3 uniform} × 3 seeds, named
   occupancy under Muon (its circuit-selection effect is not
   optimizer-mediated).
 
+## Phase 7 (extension): the direction half of the dark-space prediction
+
+Added 2026-08-01, after the Phase 5 held-out re-runs. Phase 5's dark-space
+prediction named two places supervision could push necessary intermediate
+computation: **other positions** and **unread directions of the supervised
+position's residual**. The position half is answered (intermediates are
+lens-decodable at the unsupervised `<op>` positions; the `<predict>` lens
+below ℓ* reads near-uniform). The direction half is not: the aux models
+provably compute intermediates (they solve k ≥ 3), but nobody has checked
+whether those intermediates are *linearly recoverable* from the
+`<predict>`-position residual at layers where the lens is blind.
+
+**Design.** No training; the hosted `S3-std-8L-splitku-*` checkpoints.
+For each layer ℓ and trajectory index j, fit a plain linear probe (no
+bias, no norm — probe capacity controlled so the contrast is about the
+representation) for trajectory[j] on the `<predict>`-position residual at
+layer ℓ. Fit on each run's own train-split chains, evaluate on that run's
+reconstructed held-out split (split seed = training seed). Compare probe
+vs lens accuracy per layer, aux vs baseline, k ∈ {2, 4, 6}.
+
+**Pre-registered interpretation:**
+- probe ≫ lens below ℓ* ⇒ intermediates live in lens-invisible directions
+  of the supervised position (dark space confirmed in the direction sense);
+- probe ≈ lens (both near chance) ⇒ the intermediates genuinely live
+  elsewhere (the `<op>` positions) and the supervised position's residual
+  is answer-subspace-only.
+
+## Phase 8 (extension): LEGO in a grokking regime
+
+Added 2026-08-01. The stability findings are established only on
+depth-1-sufficient tasks, where per-layer answer supervision is never in
+tension with computation the model *needs*. LEGO is the task where that
+tension exists, but its arms were trained only in a promptly-generalizing
+regime (wd = 0, cosine LR, 80% of all chains — no memorization plateau,
+no transition). Does the headline phenotype (delayed first grokking, then
+near-absorbing stability; baseline sawtooth) survive when depth is
+required?
+
+**Design.**
+1. **Regime search**: subsample the enumerated train split to a
+   memorizable set (2k / 5k / 10k chains, per-k waterfill — the
+   short-chain curriculum finding still applies) × weight decay
+   (0.1 / 0.3 / 1.0), AdamW, constant LR, 50k-step budget, per-k test
+   tracking (multi-hop may grok per-k in stages, a result on its own).
+2. **If a grokking regime exists**: baseline vs aux λ = 0.3 uniform,
+   3 seeds each; per-k first-crossing, dips, occupancy.
+
+**Pre-registered predictions:**
+- The LEGO model keeps LayerNorm, so the two-ingredient account (LN+wd
+  churn × brittle circuit) predicts baseline instability *if* it grokks.
+- Open question worth stating in advance: can the aux loss still
+  stabilize when it cannot collapse the computation into one block? On
+  the arithmetic tasks its stable solution was the shallow one — that
+  exit is closed here. Aux failing to stabilize on LEGO would bound the
+  mechanism's scope; succeeding would show redundancy maintenance works
+  for genuinely deep circuits.
+
+Small-strata caveat: at small train-set sizes the k ≤ 1 strata are tiny;
+report per-k over k ≥ 2 and keep the split-seed = training-seed
+convention so analyses reconstruct each run's split.
+
 ## References
 
 - Power et al. 2022 — Grokking (arXiv:2201.02177)

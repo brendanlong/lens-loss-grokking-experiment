@@ -208,6 +208,50 @@ def enumerate_split(
     return train_test_split(enumerate_chains(k_min, k_max), test_frac, seed)
 
 
+def subsample_k_uniform(
+    examples: list[ChainExample],
+    n: int,
+    seed: int,
+) -> list[ChainExample]:
+    """Draw a fixed subset of ``n`` chains, spread as evenly as possible
+    across chain-length strata (the grokking-regime memorization set).
+
+    Allocation is a waterfill: strata are visited smallest-first, each takes
+    ``min(remaining // strata_left, len(stratum))``, and any shortfall from
+    small strata (k <= 1 has only a handful of chains) is redistributed to
+    the larger ones. Within a stratum the choice is a seeded shuffle, so the
+    same (examples, n, seed) always yields the same subset.
+
+    Returns the subset ordered by increasing k. Raises if ``n`` exceeds the
+    number of available examples.
+    """
+    if n > len(examples):
+        msg = f"cannot subsample {n} from {len(examples)} examples"
+        raise ValueError(msg)
+    by_k = group_by_k(examples)
+    rng = random.Random(seed)
+    alloc: dict[int, int] = {}
+    remaining = n
+    smallest_first = sorted(by_k, key=lambda k: (len(by_k[k]), k))
+    for i, k in enumerate(smallest_first):
+        quota = remaining // (len(smallest_first) - i)
+        alloc[k] = min(quota, len(by_k[k]))
+        remaining -= alloc[k]
+    # Waterfill rounding can leave a few unassigned; top up strata with room.
+    for k in sorted(by_k, key=lambda k: len(by_k[k]), reverse=True):
+        if remaining == 0:
+            break
+        extra = min(remaining, len(by_k[k]) - alloc[k])
+        alloc[k] += extra
+        remaining -= extra
+    subset: list[ChainExample] = []
+    for k in sorted(by_k):
+        stratum = list(by_k[k])
+        rng.shuffle(stratum)
+        subset.extend(stratum[: alloc[k]])
+    return subset
+
+
 def group_by_k(
     examples: list[ChainExample],
 ) -> dict[int, list[ChainExample]]:

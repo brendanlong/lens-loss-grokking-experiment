@@ -1089,3 +1089,78 @@ uncertainty), baseline entropy 0.1–0.5 at accuracy 0.0 (confidently
 wrong). coalescence.png regenerated (per-run splits; means over
 converged seeds; non-converged marked "n/r"); WRITEUP LEGO section
 restated accordingly.
+
+### 2026-08-01 — Phase 7, direction probes at the supervised position: dark space confirmed in the direction sense; the aux loss aligns the *answer* with the lens
+
+The direction half of the Phase 5 dark-space prediction (EXPERIMENT_PLAN
+Phase 7), on the 9 hosted `S3-std-8L-splitku-*` checkpoints. Per layer ℓ
+and trajectory index j: plain linear probe (no bias, no norm) for
+trajectory[j] on the `<predict>`-position residual at ℓ, fit on each
+run's own train-split chains (≤4096 per k), evaluated on that run's own
+reconstructed held-out split (≤1024 per k; split seed = training seed).
+Zero-init full-batch Adam on the convex objective — deterministic. Run
+via SkyPilot on the local cluster (job 158, RTX 3060 Ti, ~8 min):
+
+```
+sky exec local-gpu skypilot/local.yaml -d \
+  --env RUN_NAME=S3-probes-predictpos \
+  --env RUN_CMD='uv run python -m lego.analyze_probes --json-out "${RESULTS_DIR}/probes.json"' \
+  --secret WANDB_API_KEY --secret AWS_ACCESS_KEY_ID --secret AWS_SECRET_ACCESS_KEY
+```
+
+**Intermediate states (j ∈ 1..k−1) at layers below that run's ℓ\*(k)**,
+held-out accuracy (per-seed s42/s43/s44; chance 0.17):
+
+| arm | k | probe max | lens max | probe mean | lens mean |
+|---|---|---|---|---|---|
+| baseline | 2 | 0.42/0.49/0.58 | 0.09/0.12/0.14 | 0.33/0.30/0.43 | 0.02/0.03/0.02 |
+| baseline | 4 | 0.94/0.93/0.75 | 0.17/0.18/0.18 | 0.37/0.50/0.40 | 0.04/0.05/0.04 |
+| baseline | 6 | 0.55/0.68/0.61 | 0.22/0.24/0.23 | 0.26/0.31/0.29 | 0.05/0.08/0.08 |
+| aux uniform | 2 | 0.56/0.65/0.47 | 0.16/0.42/0.30 | 0.44/0.50/0.45 | 0.13/0.22/0.17 |
+| aux uniform | 4 | 0.95/0.66/0.52 | 0.24/0.22/0.34 | 0.45/0.35/0.25 | 0.17/0.18/0.18 |
+| aux uniform | 6 | 0.72/0.74/0.72 | 0.21/0.23/0.28 | 0.29/0.32/0.27 | 0.17/0.17/0.17 |
+| aux linear | 2 | 0.70/0.53/0.56 | 0.19/0.33/0.09 | 0.53/0.43/0.41 | 0.13/0.21/0.08 |
+| aux linear | 4 | 0.81/0.62/0.67 | 0.24/0.25/0.29 | 0.37/0.33/0.39 | 0.18/0.18/0.18 |
+| aux linear | 6 | 0.73/0.72/0.88 | 0.21/0.20/0.26 | 0.30/0.29/0.31 | 0.17/0.17/0.16 |
+
+(For runs whose held-out lens never reaches 0.95 at any layer — the
+non-converged aux cells — "below ℓ\*" means all 8 layers.)
+
+**The answer itself (j = k) at layers below ℓ\***, probe vs lens max:
+
+| arm | k=2 | k=4 | k=6 |
+|---|---|---|---|
+| baseline | 1.00/0.98/1.00 vs 0.81/0.70/0.93 | 1.00/0.97/0.94 vs 0.91/0.84/0.62 | 0.74/0.71/0.83 vs 0.59/0.68/0.81 |
+| aux uniform | 0.93/0.91/0.16 vs 0.91/0.88/0.19 | 0.95/0.73/0.43 vs 0.94/0.73/0.42 | 0.37/0.87/0.70 vs 0.37/0.87/0.73 |
+| aux linear | 0.84/0.95/0.58 vs 0.86/0.91/0.63 | 0.84/0.65/0.72 vs 0.83/0.64/0.72 | 0.51/0.74/0.92 vs 0.54/0.76/0.93 |
+
+**Findings.**
+1. **Probe ≫ lens below ℓ\* in every run and every k — dark space
+   confirmed in the direction sense, in both arms.** Intermediate
+   trajectory states are substantially linearly recoverable from the
+   supervised position's residual at layers where the lens reads
+   near-chance (best cells 0.55–0.95 vs lens ≤ 0.34). The supervised
+   position is not answer-subspace-only: it carries intermediates in
+   lens-invisible directions. This is a property of the architecture/task,
+   not of the aux loss — baselines show it at least as strongly.
+2. **The aux-specific effect is on the answer direction, not the
+   intermediates.** In baselines the final answer is linearly present
+   well below ℓ\* (probe up to 1.00 where the lens reads 0.62–0.93 at
+   best — the lens *under-reports* the baseline's answer); in aux runs
+   probe ≈ lens for the answer at every layer (|gap| ≤ 0.05 in all 18
+   aux seed-cells vs gaps up to 0.32 in baselines). Per-layer answer
+   supervision aligns the answer
+   information with the unembedding as soon as it exists — it makes the
+   lens a *faithful* readout of the answer while leaving the
+   intermediates in dark directions.
+3. Decodability of intermediates is partial (probe max 0.4–0.95, not
+   1.0) and peaks in the staircase region (late-middle layers, later j
+   at higher layers), consistent with the `<op>`-position staircase.
+
+**Caveats.** k=2 probes fit on only 173 train chains (768 probe params):
+fit accuracy 1.00 vs held-out ~0.4–0.7 — overfit, so k=2 probe values
+are noisy lower bounds on linear decodability; k=4/k=6 probes (4096 fit
+chains) have small fit–eval gaps (e.g. 0.99 vs 0.94). The lens argmaxes
+over the full 10-token vocab while probes are 6-way; this asymmetry is
+inherent to the pre-registered contrast and can only *help* the lens on
+the intermediate rows (its near-chance values are not an artifact).

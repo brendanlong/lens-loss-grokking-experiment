@@ -66,6 +66,11 @@ class LegoTrainingConfig(BaseModel):
     k_min: int = 0
     k_max: int = 6
     test_frac: float = 0.2  # held-out fraction per chain length k
+    # Grokking regime: train on a small memorizable subset of the train
+    # split (per-k waterfill subsample; None = full split), for a fixed
+    # number of optimizer steps (None = n_epochs governs).
+    train_subset: int | None = None
+    total_steps: int | None = None
 
     # Training: answer-only cross-entropy at the <predict> position,
     # optionally with grok_lens-style deep supervision (Phase 5).

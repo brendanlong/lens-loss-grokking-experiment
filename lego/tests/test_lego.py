@@ -19,6 +19,7 @@ from lego.generator import (
     enumerate_split,
     group_by_k,
     make_example,
+    subsample_k_uniform,
     train_test_split,
     verify_trajectory,
 )
@@ -713,3 +714,119 @@ class TestKUniformSampler:
         idx = list(make_k_uniform_sampler(dataset, seed=0))
         assert len(idx) == len(dataset)
         assert min(idx) >= 0 and max(idx) < len(dataset)
+
+
+class TestSubsampleKUniform:
+    def test_size_and_membership(self) -> None:
+        train, _test = enumerate_split(0, 4, test_frac=0.2, seed=42)
+        subset = subsample_k_uniform(train, 500, seed=42)
+        assert len(subset) == 500
+        train_set = set(train)
+        assert all(ex in train_set for ex in subset)
+        assert len(set(subset)) == 500  # no duplicates
+
+    def test_small_strata_fully_included_and_waterfill(self) -> None:
+        """k<=1 strata are smaller than an even share; they are taken whole
+        and the shortfall goes to the large strata."""
+        train, _test = enumerate_split(0, 4, test_frac=0.2, seed=42)
+        by_k_train = {k: len(v) for k, v in group_by_k(train).items()}
+        subset = subsample_k_uniform(train, 500, seed=42)
+        by_k = {k: len(v) for k, v in group_by_k(subset).items()}
+        # small strata (fewer than an even 100-per-k share) come in whole
+        assert by_k[0] == by_k_train[0]
+        assert by_k[1] == by_k_train[1]
+        # large strata absorb the remainder about evenly
+        assert sum(by_k.values()) == 500
+        large = [by_k[k] for k in by_k if by_k[k] < by_k_train[k]]
+        assert max(large) - min(large) <= 1
+
+    def test_deterministic_given_seed(self) -> None:
+        train, _test = enumerate_split(0, 3, test_frac=0.2, seed=42)
+        a = subsample_k_uniform(train, 200, seed=1)
+        b = subsample_k_uniform(train, 200, seed=1)
+        c = subsample_k_uniform(train, 200, seed=2)
+        assert a == b
+        assert a != c
+
+    def test_n_too_large_raises(self) -> None:
+        train, _test = enumerate_split(0, 1, test_frac=0.2, seed=42)
+        with pytest.raises(ValueError, match="cannot subsample"):
+            subsample_k_uniform(train, len(train) + 1, seed=0)
+
+    def test_disjoint_from_test_split(self) -> None:
+        """The subset is drawn from the train split only, so it can never
+        contain held-out chains."""
+        train, test = enumerate_split(0, 3, test_frac=0.2, seed=42)
+        subset = subsample_k_uniform(train, 300, seed=42)
+        test_set = set(test)
+        assert not any(ex in test_set for ex in subset)
+
+
+class TestFitProbes:
+    def test_recovers_linear_signal_and_shapes(self) -> None:
+        """Probes decode a class that is linearly present in the features and
+        stay at chance for one that is absent."""
+        from lego.analyze_probes import fit_probes, probe_accuracy
+
+        gen = torch.Generator().manual_seed(0)
+        n, dim = 600, 16
+        classes = torch.randint(0, 6, (n,), generator=gen)
+        noise_classes = torch.randint(0, 6, (n,), generator=gen)
+        directions = torch.randn(6, dim, generator=gen)
+        feats = directions[classes] + 0.1 * torch.randn(n, dim, generator=gen)
+        # layer 0 carries the signal; layer 1 is pure noise
+        layer_feats = torch.stack([feats, torch.randn(n, dim, generator=gen)])
+        targets = torch.stack([classes, noise_classes])
+
+        weights = fit_probes(layer_feats, targets, steps=300, lr=5e-2)
+        assert weights.shape == (2, 2, 6, dim)
+        acc = probe_accuracy(layer_feats, targets, weights)
+        assert acc.shape == (2, 2)
+        assert acc[0, 0] > 0.95  # signal layer, signal target
+        assert acc[1, 1] < 0.5  # noise layer can only overfit noise targets
+
+    def test_deterministic(self) -> None:
+        from lego.analyze_probes import fit_probes
+
+        gen = torch.Generator().manual_seed(1)
+        feats = torch.randn(2, 50, 8, generator=gen)
+        targets = torch.randint(0, 6, (3, 50), generator=gen)
+        w1 = fit_probes(feats, targets, steps=50)
+        w2 = fit_probes(feats, targets, steps=50)
+        assert torch.equal(w1, w2)
+
+
+class TestTotalStepsBudget:
+    def test_loop_stops_at_total_steps(self) -> None:
+        """train_lego_model stops mid-epoch when total_steps is reached."""
+        from torch.utils.data import DataLoader
+
+        from lego.config import lego_model_config
+        from lego.data import collate_chains
+        from lego.model import StandardTransformer
+        from lego.training import train_lego_model
+
+        train, test = enumerate_split(0, 2, test_frac=0.2, seed=42)
+        dataset = ChainDataset(train, k_max=2)
+        loader = DataLoader(dataset, batch_size=32, collate_fn=collate_chains)
+        config = lego_model_config(dim=16, n_heads=2, n_layers=1)
+        model = StandardTransformer(config)
+        result = train_lego_model(
+            model,
+            loader,
+            group_by_k(test),
+            config,
+            torch.device("cpu"),
+            total_steps=3,
+            k_min=0,
+            k_max=2,
+            n_epochs=5,
+            use_compile=False,
+            early_stop_patience=None,
+            log_every_steps=1000,
+            eval_every_steps=1000,
+            checkpoint_dir=None,
+            save_every_steps=None,
+            use_wandb=False,
+        )
+        assert result.total_steps == 3

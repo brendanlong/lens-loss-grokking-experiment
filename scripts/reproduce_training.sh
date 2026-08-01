@@ -69,3 +69,10 @@ for s in 42 43 44; do train "p113-L2-lam0.3-uniform-frac0.3-s${s}" --aux-lambda 
 #   uv run python -m lego.train --seed $s --lens-aux --lens-aux-weight 0.3 --lens-aux-weighting linear --wandb-run-name "S3-std-8L-splitku-lensaux0.3-linear-s${s}" --checkpoint-dir "data/lego/checkpoints/S3-std-8L-splitku-lensaux0.3-linear-s${s}"
 # done
 # for s in 42 43; do uv run python -m lego.train --seed $s --lens-aux --lens-aux-weight 0.3 --lens-aux-mode all-positions --wandb-run-name "S3-std-8L-splitku-lensaux0.3-allpos-s${s}" --checkpoint-dir "data/lego/checkpoints/S3-std-8L-splitku-lensaux0.3-allpos-s${s}"; done
+
+# --- LEGO grokking regime search (memorizable subset × weight decay;
+# --- constant LR, 50k steps, ~25 min/run) ---
+# for n in 2000 5000 10000; do for wd in 0.1 0.3 1.0; do
+#   run="S3-grok-sub${n}-wd${wd}-s42-50k"
+#   uv run python -m lego.train --train-subset $n --weight-decay $wd --lr-schedule constant --total-steps 50000 --eval-every-steps 500 --seed 42 --wandb-run-name "$run" --checkpoint-dir "data/lego/checkpoints/$run"
+# done; done

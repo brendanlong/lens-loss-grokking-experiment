@@ -398,6 +398,12 @@ def train_lego_model(
                 )
                 last_saved_step = global_step
 
+            # Fixed step budget: n_epochs is ceil(total_steps /
+            # steps_per_epoch), so the final epoch may be partial.
+            if global_step >= total_steps:
+                stopped_early = True
+                break
+
         if stopped_early:
             break
 
