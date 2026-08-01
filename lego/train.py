@@ -34,10 +34,10 @@ import torch
 from torch.utils.data import DataLoader
 
 from lego.config import LegoTrainingConfig, lego_model_config
-from lego.data import ChainDataset, collate_s3, make_k_uniform_sampler
+from lego.data import ChainDataset, collate_chains, make_k_uniform_sampler
 from lego.generator import S3, enumerate_split, group_by_k
-from lego.model import create_model
-from lego.tokenizer import Tokenizer
+from lego.model import StandardTransformer
+from lego.tokenizer import VOCAB_SIZE
 from lego.training import train_lego_model
 
 
@@ -143,10 +143,7 @@ def main() -> None:
     parser.add_argument("--no-compile", action="store_true")
     args = parser.parse_args()
 
-    # Group and tokenizer (S3 only)
-    group = S3
-    tokenizer = Tokenizer(group)
-    print(f"Group: {group.name} ({group.order} elements, vocab={tokenizer.vocab_size})")
+    print(f"Group: {S3.name} ({S3.order} elements, vocab={VOCAB_SIZE})")
 
     # Device
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -183,11 +180,10 @@ def main() -> None:
         dim=args.dim,
         n_heads=args.n_heads,
         n_layers=args.n_layers,
-        vocab_size=tokenizer.vocab_size,
     )
 
     run_name = args.wandb_run_name or (
-        f"{group.name}_std"
+        f"{S3.name}_std"
         f"_{args.dim}d_{args.n_heads}h_{args.n_layers}L"
         f"_k{args.k_min}-{args.k_max}"
     )
@@ -200,7 +196,6 @@ def main() -> None:
         args.k_max,
         test_frac=args.test_frac,
         seed=args.seed,
-        group=group,
     )
     test_examples_per_k = group_by_k(test_examples)
     n_total = len(train_examples) + len(test_examples)
@@ -214,12 +209,12 @@ def main() -> None:
     )
     print(f"Held-out test examples per k: {per_k_str}")
 
-    train_dataset = ChainDataset(train_examples, args.k_max, tokenizer)
+    train_dataset = ChainDataset(train_examples, args.k_max)
     train_loader = DataLoader(
         train_dataset,
         batch_size=config.batch_size,
         sampler=make_k_uniform_sampler(train_dataset, seed=args.seed),
-        collate_fn=collate_s3,
+        collate_fn=collate_chains,
         drop_last=True,
         pin_memory=device.type == "cuda",
     )
@@ -228,7 +223,7 @@ def main() -> None:
     total_steps = steps_per_epoch * config.n_epochs
 
     # Model
-    model = create_model(model_config)
+    model = StandardTransformer(model_config)
     model = model.to(device)
 
     if config.lens_aux:
@@ -275,9 +270,8 @@ def main() -> None:
         wandb_config={
             "model": model_config.model_dump(),
             "training": config.model_dump(),
-            "group": group.name,
+            "group": S3.name,
         },
-        tokenizer=tokenizer,
     )
 
     # Final summary

@@ -15,44 +15,32 @@ import torch
 from torch import Tensor
 from torch.utils.data import Dataset
 
-from lego.generator import S3, ChainExample
+from lego.generator import ChainExample
 from lego.tokenizer import (
-    Tokenizer,
+    PAD_ID,
     answer_position,
+    element_token,
+    encode_padded,
     seq_len,
 )
 
-# Default S3 tokenizer for backward-compatible functions
-_S3_TOKENIZER = Tokenizer(S3)
 
-
-def encode_trajectory(
-    example: ChainExample,
-    k_max: int,
-    tokenizer: Tokenizer | None = None,
-) -> list[int]:
+def encode_trajectory(example: ChainExample, k_max: int) -> list[int]:
     """Encode trajectory as element tokens, padded to k_max + 1.
 
     trajectory[j] = accumulated result after j operations (as element token).
     Padded positions use PAD_ID.
     """
-    tok = tokenizer or _S3_TOKENIZER
-    tokens = [tok.element_token(t) for t in example.trajectory]
-    tokens.extend([tok.pad_id] * (k_max + 1 - len(tokens)))
+    tokens = [element_token(t) for t in example.trajectory]
+    tokens.extend([PAD_ID] * (k_max + 1 - len(tokens)))
     return tokens
 
 
 class ChainDataset(Dataset[dict[str, Tensor]]):
     """Map-style dataset of group composition chains, pre-encoded with padding."""
 
-    def __init__(
-        self,
-        examples: list[ChainExample],
-        k_max: int,
-        tokenizer: Tokenizer | None = None,
-    ) -> None:
+    def __init__(self, examples: list[ChainExample], k_max: int) -> None:
         self.max_seq_len = seq_len(k_max)
-        tok = tokenizer or _S3_TOKENIZER
 
         input_ids_list: list[Tensor] = []
         answer_pos_list: list[int] = []
@@ -60,14 +48,14 @@ class ChainDataset(Dataset[dict[str, Tensor]]):
         trajectory_list: list[Tensor] = []
 
         for ex in examples:
-            tokens = tok.encode_padded(ex, k_max)
+            tokens = encode_padded(ex, k_max)
             k = len(ex.ops)
             input_ids_list.append(torch.tensor(tokens, dtype=torch.long))
             answer_pos_list.append(answer_position(k))
             chain_len_list.append(k)
             trajectory_list.append(
                 torch.tensor(
-                    encode_trajectory(ex, k_max, tok),
+                    encode_trajectory(ex, k_max),
                     dtype=torch.long,
                 ),
             )
@@ -113,7 +101,7 @@ def make_k_uniform_sampler(
     )
 
 
-def collate_s3(batch: list[dict[str, Tensor]]) -> dict[str, Tensor]:
+def collate_chains(batch: list[dict[str, Tensor]]) -> dict[str, Tensor]:
     """Collate batch of group composition examples."""
     return {
         "input_ids": torch.stack([b["input_ids"] for b in batch]),
@@ -126,19 +114,14 @@ def collate_s3(batch: list[dict[str, Tensor]]) -> dict[str, Tensor]:
 def make_eval_batch(
     examples: list[ChainExample],
     k_max: int,
-    tokenizer: Tokenizer | None = None,
 ) -> dict[str, Tensor]:
     """Create an evaluation batch, padded to k_max sequence length.
 
     All examples should have the same chain length k for clean per-k eval.
     """
-    tok = tokenizer or _S3_TOKENIZER
     k = len(examples[0].ops)
     input_ids = torch.stack(
-        [
-            torch.tensor(tok.encode_padded(ex, k_max), dtype=torch.long)
-            for ex in examples
-        ]
+        [torch.tensor(encode_padded(ex, k_max), dtype=torch.long) for ex in examples]
     )
     ans_pos = answer_position(k)
     return {

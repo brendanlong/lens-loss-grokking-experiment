@@ -1,7 +1,7 @@
-"""Group composition chain enumeration.
+"""S3 group composition chain enumeration.
 
-Supports multiple finite groups for the LEGO composition task:
-  - S3: Symmetric group on 3 elements (6 elements, non-abelian, solvable)
+The LEGO composition task uses S3, the symmetric group on 3 elements
+(6 elements, non-abelian, solvable).
 
 Each example is a chain: a starting element followed by k group operations.
 The model must output the result of composing all operations in sequence.
@@ -26,18 +26,16 @@ Example (k=3, S3):
 
 import itertools
 import random
-from typing import Literal, NamedTuple
+from typing import NamedTuple
 
-# --- Group definitions ---
-
-GroupName = Literal["S3"]
+# --- Group definition ---
 
 
 class Group(NamedTuple):
     """A finite group defined by its Cayley table.
 
     Attributes:
-        name: Human-readable name (e.g., "S3", "A5").
+        name: Human-readable name (e.g., "S3").
         elements: Element labels, indexed 0..n-1.
         cayley: cayley[a][b] = a · b (row = left, col = right).
     """
@@ -81,13 +79,6 @@ S3 = Group(
     ],
 )
 
-GROUPS: dict[GroupName, Group] = {"S3": S3}
-
-# --- Legacy aliases for S3 (used by existing code) ---
-ELEMENTS: list[str] = S3.elements
-N_ELEMENTS = S3.order
-CAYLEY: list[list[int]] = S3.cayley
-
 
 # --- Example enumeration ---
 
@@ -108,16 +99,12 @@ class ChainExample(NamedTuple):
     trajectory: tuple[int, ...]
 
 
-# Keep S3Example as an alias for backward compatibility
-S3Example = ChainExample
+def compose(left: int, right: int) -> int:
+    """Compute left · right in S3."""
+    return S3.cayley[left][right]
 
 
-def compose(left: int, right: int, group: Group = S3) -> int:
-    """Compute left · right in the given group."""
-    return group.cayley[left][right]
-
-
-def make_example(start: int, ops: tuple[int, ...], group: Group = S3) -> ChainExample:
+def make_example(start: int, ops: tuple[int, ...]) -> ChainExample:
     """Build a ChainExample from a start element and op sequence.
 
     Computes the full trajectory via left-multiplication.
@@ -125,16 +112,12 @@ def make_example(start: int, ops: tuple[int, ...], group: Group = S3) -> ChainEx
     trajectory: list[int] = [start]
     state = start
     for op in ops:
-        state = compose(op, state, group)
+        state = compose(op, state)
         trajectory.append(state)
     return ChainExample(start=start, ops=ops, trajectory=tuple(trajectory))
 
 
-def enumerate_chains(
-    k_min: int,
-    k_max: int,
-    group: Group = S3,
-) -> list[ChainExample]:
+def enumerate_chains(k_min: int, k_max: int) -> list[ChainExample]:
     """Deterministically enumerate ALL chains with k in [k_min, k_max].
 
     Every (start element, op sequence) pair is generated exactly once, in a
@@ -148,7 +131,6 @@ def enumerate_chains(
         k_min: Minimum number of operations (>= 0). k=0 is the identity
             case: answer = start element.
         k_max: Maximum number of operations (inclusive).
-        group: The group to use for composition.
     """
     if k_min < 0:
         msg = f"k_min must be >= 0, got {k_min}"
@@ -157,12 +139,12 @@ def enumerate_chains(
         msg = f"k_max ({k_max}) must be >= k_min ({k_min})"
         raise ValueError(msg)
 
-    n = group.order
+    n = S3.order
     examples: list[ChainExample] = []
     for k in range(k_min, k_max + 1):
         for start in range(n):
             for ops in itertools.product(range(n), repeat=k):
-                examples.append(make_example(start, ops, group))
+                examples.append(make_example(start, ops))
     return examples
 
 
@@ -216,7 +198,6 @@ def enumerate_split(
     k_max: int,
     test_frac: float = 0.2,
     seed: int = 42,
-    group: Group = S3,
 ) -> tuple[list[ChainExample], list[ChainExample]]:
     """Enumerate all chains for k in [k_min, k_max] and split train/test.
 
@@ -224,7 +205,7 @@ def enumerate_split(
     that training and analysis scripts reconstruct the *same* held-out test
     split from (k_min, k_max, test_frac, seed).
     """
-    return train_test_split(enumerate_chains(k_min, k_max, group), test_frac, seed)
+    return train_test_split(enumerate_chains(k_min, k_max), test_frac, seed)
 
 
 def group_by_k(
@@ -237,7 +218,7 @@ def group_by_k(
     return by_k
 
 
-def verify_trajectory(example: ChainExample, group: Group = S3) -> bool:
+def verify_trajectory(example: ChainExample) -> bool:
     """Verify that trajectory is consistent with start and ops."""
     if len(example.trajectory) != len(example.ops) + 1:
         return False
@@ -245,7 +226,7 @@ def verify_trajectory(example: ChainExample, group: Group = S3) -> bool:
         return False
     state = example.start
     for i, op in enumerate(example.ops):
-        state = compose(op, state, group)
+        state = compose(op, state)
         if example.trajectory[i + 1] != state:
             return False
     return True

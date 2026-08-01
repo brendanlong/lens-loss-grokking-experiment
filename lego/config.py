@@ -4,6 +4,8 @@ from typing import Literal
 
 from pydantic import BaseModel, computed_field, model_validator
 
+from lego.tokenizer import VOCAB_SIZE
+
 
 class ModelConfig(BaseModel):
     """Model architecture configuration.
@@ -42,24 +44,14 @@ def lego_model_config(
     n_heads: int = 4,
     n_layers: int = 8,
     dropout: float = 0.0,
-    vocab_size: int | None = None,
 ) -> ModelConfig:
-    """Create ModelConfig for LEGO experiments.
-
-    Args:
-        vocab_size: Override vocabulary size. If None, uses S3 default (10).
-    """
-    if vocab_size is None:
-        from lego.tokenizer import VOCAB_SIZE
-
-        vocab_size = VOCAB_SIZE
-
+    """Create ModelConfig for LEGO experiments (S3 vocabulary, 10 tokens)."""
     return ModelConfig(
         dim=dim,
         n_heads=n_heads,
         n_layers=n_layers,
         intermediate_dim=dim * 4,
-        vocab_size=vocab_size,
+        vocab_size=VOCAB_SIZE,
         max_seq_len=128,  # plenty of room for any k_max
         dropout=dropout,
     )

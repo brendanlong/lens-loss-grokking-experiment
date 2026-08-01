@@ -13,7 +13,6 @@ from collections.abc import Callable
 import torch
 import torch.nn.functional as F
 from torch import Tensor, nn
-from torch.utils.checkpoint import checkpoint
 
 from lego.config import ModelConfig
 
@@ -87,14 +86,9 @@ class TransformerBlock(nn.Module):
 class StandardTransformer(nn.Module):
     """Standard transformer LM with distinct weights per layer."""
 
-    def __init__(
-        self,
-        config: ModelConfig,
-        gradient_checkpointing: bool = False,
-    ) -> None:
+    def __init__(self, config: ModelConfig) -> None:
         super().__init__()
         self.config = config
-        self.gradient_checkpointing = gradient_checkpointing
         self.tok_emb = nn.Embedding(config.vocab_size, config.dim)
         self.layers = nn.ModuleList(
             [TransformerBlock(config) for _ in range(config.n_layers)]
@@ -136,12 +130,7 @@ class StandardTransformer(nn.Module):
         """Forward pass returning final hidden states before vocab projection."""
         x = self._embed(input_ids)
         for layer in self.layers:
-            if self.gradient_checkpointing and self.training:
-                result = checkpoint(layer, x, use_reentrant=False)
-                assert isinstance(result, Tensor)
-                x = result
-            else:
-                x = layer(x)
+            x = layer(x)
         return self.final_norm(x)
 
     def forward_with_layer_hooks(
@@ -168,18 +157,6 @@ class StandardTransformer(nn.Module):
         return self.get_logits(x), residuals
 
 
-# Historical alias from when a weight-shared variant also existed.
-AnyModel = StandardTransformer
-
-
-def create_model(
-    config: ModelConfig,
-    gradient_checkpointing: bool = False,
-) -> StandardTransformer:
-    """Create a model from config."""
-    return StandardTransformer(config, gradient_checkpointing)
-
-
 def print_model_summary(model: StandardTransformer) -> None:
     """Print a summary of model architecture and parameter counts."""
     config = model.config
@@ -194,7 +171,7 @@ def print_model_summary(model: StandardTransformer) -> None:
     print(f"{'=' * 50}")
     print(f"  Hidden dim:     {config.dim}")
     print(f"  Heads:          {config.n_heads}")
-    print(f"  Layers/Iters:   {config.n_layers}")
+    print(f"  Layers:         {config.n_layers}")
     print(f"  MLP dim:        {config.intermediate_dim}")
     print(f"  Vocab size:     {config.vocab_size}")
     print(f"  Context len:    {config.max_seq_len}")
@@ -203,6 +180,4 @@ def print_model_summary(model: StandardTransformer) -> None:
     print(f"  Blocks:         {block_params:>12,}")
     print(f"  Final norm:     {norm_params:>12,}")
     print(f"  Total:          {total:>12,}")
-    effective_total = block_params + emb_params + norm_params
-    print(f"  Effective:      {effective_total:>12,}")
     print(f"{'=' * 50}\n")

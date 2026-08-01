@@ -30,8 +30,8 @@ from lego.analyze_logit_lens import (
     analyze_op_positions,
     analyze_predict_position,
 )
-from lego.generator import ChainExample, enumerate_split, group_by_k
-from lego.model import AnyModel
+from lego.generator import S3, ChainExample, enumerate_split, group_by_k
+from lego.model import StandardTransformer
 from lego.tokenizer import answer_position, encode
 from lego.training import load_model
 
@@ -49,12 +49,12 @@ RUNS: list[tuple[str, str, str]] = [
     ("aux linear s43", "S3-std-8L-splitku-lensaux0.3-linear-s43", "step_20960.pt"),
     ("aux linear s44", "S3-std-8L-splitku-lensaux0.3-linear-s44", "step_20960.pt"),
 ]
-N_ELEMENTS = 6
+N_ELEMENTS = S3.order
 
 
 @torch.no_grad()
 def element_entropy_at_predict(
-    model: AnyModel,
+    model: StandardTransformer,
     examples: list[ChainExample],
     k: int,
     device: torch.device,
@@ -92,7 +92,7 @@ def test_examples_by_k(
 
 @torch.no_grad()
 def coalescence_layer(
-    model: AnyModel,
+    model: StandardTransformer,
     examples: list[ChainExample],
     device: torch.device,
 ) -> int | None:

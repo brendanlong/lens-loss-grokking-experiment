@@ -27,12 +27,7 @@ from lego.losses import (
     compute_lens_aux_loss,
     compute_lens_aux_loss_all_positions,
 )
-from lego.model import (
-    AnyModel,
-    create_model,
-    print_model_summary,
-)
-from lego.tokenizer import Tokenizer
+from lego.model import StandardTransformer, print_model_summary
 
 
 @dataclass
@@ -52,7 +47,6 @@ def evaluate(
     k_max: int,
     batch_size: int,
     device: torch.device,
-    tokenizer: Tokenizer | None = None,
 ) -> dict[str, float]:
     """Evaluate per-chain-length accuracy."""
     model.eval()
@@ -65,7 +59,7 @@ def evaluate(
         count = 0
         for i in range(0, len(examples), batch_size):
             chunk = examples[i : i + batch_size]
-            batch = make_eval_batch(chunk, k_max, tokenizer)
+            batch = make_eval_batch(chunk, k_max)
             input_ids = batch["input_ids"].to(device, non_blocking=True)
             answer_positions = batch["answer_position"].to(
                 device,
@@ -86,7 +80,7 @@ def evaluate(
 def load_model(
     checkpoint_path: str | Path,
     device: torch.device,
-) -> tuple[AnyModel, ModelConfig]:
+) -> tuple[StandardTransformer, ModelConfig]:
     """Load model and config from checkpoint."""
     ckpt = torch.load(
         checkpoint_path,
@@ -94,7 +88,7 @@ def load_model(
         map_location=device,
     )
     model_config = ModelConfig(**ckpt["model_config"])
-    model: AnyModel = create_model(model_config)
+    model = StandardTransformer(model_config)
     model.load_state_dict(ckpt["model_state_dict"])
     model = model.to(device)
     model.eval()
@@ -154,7 +148,7 @@ def create_optimizer_and_scheduler(
 
 
 def train_lego_model(
-    model: AnyModel,
+    model: StandardTransformer,
     train_loader: DataLoader[dict[str, torch.Tensor]],
     test_examples_per_k: dict[int, list[ChainExample]],
     model_config: ModelConfig,
@@ -182,7 +176,6 @@ def train_lego_model(
     use_wandb: bool = True,
     wandb_project: str = "lego-reasoning",
     wandb_config: dict[str, object] | None = None,
-    tokenizer: Tokenizer | None = None,
 ) -> TrainingResult:
     """Unified training loop for LEGO models.
 
@@ -337,7 +330,6 @@ def train_lego_model(
                         k_max,
                         eval_batch_size,
                         device,
-                        tokenizer,
                     )
                     log_dict.update(eval_results)
 
@@ -427,7 +419,6 @@ def train_lego_model(
         k_max,
         eval_batch_size,
         device,
-        tokenizer,
     )
 
     if use_wandb:

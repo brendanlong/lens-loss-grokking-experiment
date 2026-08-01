@@ -6,16 +6,12 @@ import torch.nn.functional as F
 
 from lego.data import (
     ChainDataset,
-    collate_s3,
+    collate_chains,
     encode_trajectory,
     make_eval_batch,
     make_k_uniform_sampler,
 )
 from lego.generator import (
-    CAYLEY,
-    ELEMENTS,
-    GROUPS,
-    N_ELEMENTS,
     S3,
     ChainExample,
     compose,
@@ -39,12 +35,13 @@ from lego.tokenizer import (
     PREDICT_TOKEN,
     START_TOKEN,
     VOCAB_SIZE,
-    Tokenizer,
     answer_position,
+    decode,
     element_token,
     encode,
     encode_padded,
     seq_len,
+    token_to_str,
 )
 
 # ---- Cayley table tests (group axiom verification) ----
@@ -55,45 +52,45 @@ class TestCayleyTable:
 
     def test_identity_left(self) -> None:
         """e · x = x for all x."""
-        for x in range(N_ELEMENTS):
+        for x in range(S3.order):
             assert compose(0, x) == x
 
     def test_identity_right(self) -> None:
         """x · e = x for all x."""
-        for x in range(N_ELEMENTS):
+        for x in range(S3.order):
             assert compose(x, 0) == x
 
     def test_closure(self) -> None:
         """All products are valid elements (0-5)."""
-        for a in range(N_ELEMENTS):
-            for b in range(N_ELEMENTS):
+        for a in range(S3.order):
+            for b in range(S3.order):
                 result = compose(a, b)
-                assert 0 <= result < N_ELEMENTS
+                assert 0 <= result < S3.order
 
     def test_associativity(self) -> None:
         """(a · b) · c = a · (b · c) for all a, b, c."""
-        for a in range(N_ELEMENTS):
-            for b in range(N_ELEMENTS):
-                for c in range(N_ELEMENTS):
+        for a in range(S3.order):
+            for b in range(S3.order):
+                for c in range(S3.order):
                     ab_c = compose(compose(a, b), c)
                     a_bc = compose(a, compose(b, c))
                     assert ab_c == a_bc, (
-                        f"({ELEMENTS[a]}·{ELEMENTS[b]})·{ELEMENTS[c]} = "
-                        f"{ELEMENTS[ab_c]} != "
-                        f"{ELEMENTS[a]}·({ELEMENTS[b]}·{ELEMENTS[c]}) = "
-                        f"{ELEMENTS[a_bc]}"
+                        f"({S3.elements[a]}·{S3.elements[b]})·{S3.elements[c]} = "
+                        f"{S3.elements[ab_c]} != "
+                        f"{S3.elements[a]}·({S3.elements[b]}·{S3.elements[c]}) = "
+                        f"{S3.elements[a_bc]}"
                     )
 
     def test_inverses(self) -> None:
         """Every element has a left and right inverse."""
-        for a in range(N_ELEMENTS):
+        for a in range(S3.order):
             # Find left inverse: x · a = e
             left_inv = None
-            for x in range(N_ELEMENTS):
+            for x in range(S3.order):
                 if compose(x, a) == 0:
                     left_inv = x
                     break
-            assert left_inv is not None, f"{ELEMENTS[a]} has no left inverse"
+            assert left_inv is not None, f"{S3.elements[a]} has no left inverse"
             # Left inverse is also right inverse in a group
             assert compose(a, left_inv) == 0
 
@@ -113,14 +110,14 @@ class TestCayleyTable:
     def test_reflection_order_2(self) -> None:
         """s² = e, (rs)² = e, (r²s)² = e (reflections have order 2)."""
         for elem in [3, 4, 5]:  # s, rs, r2s
-            assert compose(elem, elem) == 0, f"{ELEMENTS[elem]}² ≠ e"
+            assert compose(elem, elem) == 0, f"{S3.elements[elem]}² ≠ e"
 
     def test_group_order(self) -> None:
         """S₃ has exactly 6 elements."""
-        assert N_ELEMENTS == 6
-        assert len(ELEMENTS) == 6
-        assert len(CAYLEY) == 6
-        for row in CAYLEY:
+        assert S3.order == 6
+        assert len(S3.elements) == 6
+        assert len(S3.cayley) == 6
+        for row in S3.cayley:
             assert len(row) == 6
 
     def test_latin_square(self) -> None:
@@ -128,18 +125,18 @@ class TestCayleyTable:
 
         This is a necessary property of any group's multiplication table.
         """
-        elements = set(range(N_ELEMENTS))
-        for a in range(N_ELEMENTS):
-            row = {compose(a, b) for b in range(N_ELEMENTS)}
-            col = {compose(b, a) for b in range(N_ELEMENTS)}
-            assert row == elements, f"Row {ELEMENTS[a]} not a permutation"
-            assert col == elements, f"Col {ELEMENTS[a]} not a permutation"
+        elements = set(range(S3.order))
+        for a in range(S3.order):
+            row = {compose(a, b) for b in range(S3.order)}
+            col = {compose(b, a) for b in range(S3.order)}
+            assert row == elements, f"Row {S3.elements[a]} not a permutation"
+            assert col == elements, f"Col {S3.elements[a]} not a permutation"
 
 
 # ---- Enumeration tests ----
 
 
-def expected_count(k_min: int, k_max: int, n: int = N_ELEMENTS) -> int:
+def expected_count(k_min: int, k_max: int, n: int = S3.order) -> int:
     """n starts x n^k op sequences for each k in [k_min, k_max]."""
     return sum(n * n**k for k in range(k_min, k_max + 1))
 
@@ -187,10 +184,10 @@ class TestEnumerateChains:
     def test_final_states_exactly_uniform(self) -> None:
         """Over the full enumeration of length-3 chains, every final state
         appears exactly n^3 times (each op-product is a bijection on starts)."""
-        counts = [0] * N_ELEMENTS
+        counts = [0] * S3.order
         for ex in enumerate_chains(3, 3):
             counts[ex.trajectory[-1]] += 1
-        assert counts == [N_ELEMENTS**3] * N_ELEMENTS
+        assert counts == [S3.order**3] * S3.order
 
 
 class TestMakeExample:
@@ -300,9 +297,9 @@ class TestGroupByK:
 
 class TestElementToken:
     def test_range(self) -> None:
-        for idx in range(N_ELEMENTS):
+        for idx in range(S3.order):
             token = element_token(idx)
-            assert ELEMENT_OFFSET <= token < ELEMENT_OFFSET + N_ELEMENTS
+            assert ELEMENT_OFFSET <= token < ELEMENT_OFFSET + S3.order
 
     def test_invalid_raises(self) -> None:
         with pytest.raises(ValueError):
@@ -313,20 +310,18 @@ class TestElementToken:
 
 class TestTokenToStr:
     def test_elements(self) -> None:
-        tok = Tokenizer(S3)
-        for idx, name in enumerate(ELEMENTS):
-            assert tok.token_to_str(tok.element_token(idx)) == name
+        for idx, name in enumerate(S3.elements):
+            assert token_to_str(element_token(idx)) == name
 
     def test_special_tokens(self) -> None:
-        tok = Tokenizer(S3)
-        assert tok.token_to_str(PAD_ID) == "<pad>"
-        assert tok.token_to_str(START_TOKEN) == "<start>"
-        assert tok.token_to_str(OP_TOKEN) == "<op>"
-        assert tok.token_to_str(PREDICT_TOKEN) == "<predict>"
+        assert token_to_str(PAD_ID) == "<pad>"
+        assert token_to_str(START_TOKEN) == "<start>"
+        assert token_to_str(OP_TOKEN) == "<op>"
+        assert token_to_str(PREDICT_TOKEN) == "<predict>"
 
     def test_unknown_raises(self) -> None:
         with pytest.raises(ValueError):
-            Tokenizer(S3).token_to_str(99)
+            token_to_str(99)
 
 
 class TestEncode:
@@ -358,8 +353,7 @@ class TestEncode:
     def test_decode_readable(self) -> None:
         ex = ChainExample(start=0, ops=(1, 3), trajectory=(0, 1, 5))
         tokens = encode(ex)
-        result = Tokenizer(S3).decode(tokens)
-        assert result == "<start> e <op> r <op> s <predict> r2s"
+        assert decode(tokens) == "<start> e <op> r <op> s <predict> r2s"
 
 
 class TestEncodePadded:
@@ -396,51 +390,22 @@ class TestVocabSize:
     def test_no_overlap(self) -> None:
         """All token IDs are within vocab range and distinct."""
         all_ids = {PAD_ID, START_TOKEN, OP_TOKEN, PREDICT_TOKEN}
-        for idx in range(N_ELEMENTS):
+        for idx in range(S3.order):
             all_ids.add(element_token(idx))
         # 1 pad + 6 elements + 3 specials = 10
         assert len(all_ids) == VOCAB_SIZE
         assert max(all_ids) == VOCAB_SIZE - 1
 
-
-class TestTokenizerClass:
-    """Test the Tokenizer class (S3)."""
-
     def test_vocab_size(self) -> None:
-        tok = Tokenizer(S3)
-        assert tok.vocab_size == S3.order + 4
-
-    def test_element_roundtrip(self) -> None:
-        tok = Tokenizer(S3)
-        for idx in range(S3.order):
-            token = tok.element_token(idx)
-            assert tok.element_index(token) == idx
-            assert tok.is_element_token(token)
-
-    def test_special_tokens_not_elements(self) -> None:
-        tok = Tokenizer(S3)
-        assert not tok.is_element_token(tok.pad_id)
-        assert not tok.is_element_token(tok.start_token)
-        assert not tok.is_element_token(tok.op_token)
-        assert not tok.is_element_token(tok.predict_token)
+        assert S3.order + 4 == VOCAB_SIZE
 
     def test_encode_decode_roundtrip(self) -> None:
-        tok = Tokenizer(S3)
         ex = make_example(2, (1, 3, 0))
-        tokens = tok.encode(ex)
+        tokens = encode(ex)
         assert len(tokens) == seq_len(3)
-        decoded = tok.decode(tokens)
+        decoded = decode(tokens)
         assert "<start>" in decoded
         assert "<predict>" in decoded
-
-    def test_no_token_overlap(self) -> None:
-        """Token IDs don't collide."""
-        for group in GROUPS.values():
-            tok = Tokenizer(group)
-            all_ids = {tok.pad_id, tok.start_token, tok.op_token, tok.predict_token}
-            for idx in range(group.order):
-                all_ids.add(tok.element_token(idx))
-            assert len(all_ids) == tok.vocab_size
 
 
 # ---- Data pipeline tests ----
@@ -474,7 +439,7 @@ class TestCollate:
     def test_batch_shapes(self) -> None:
         examples = enumerate_chains(1, 4)[:10]
         ds = ChainDataset(examples, k_max=4)
-        batch = collate_s3([ds[i] for i in range(5)])
+        batch = collate_chains([ds[i] for i in range(5)])
         assert batch["input_ids"].shape == (5, seq_len(4))
         assert batch["answer_position"].shape == (5,)
         assert batch["chain_length"].shape == (5,)

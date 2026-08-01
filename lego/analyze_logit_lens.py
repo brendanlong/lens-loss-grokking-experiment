@@ -17,8 +17,8 @@ import torch
 import torch.nn.functional as F
 from torch import Tensor
 
-from lego.generator import S3Example
-from lego.model import AnyModel
+from lego.generator import ChainExample
+from lego.model import StandardTransformer
 from lego.tokenizer import (
     answer_position,
     element_token,
@@ -40,7 +40,7 @@ def logit_lens(
     return F.linear(final_norm(residual), embedding_weight)
 
 
-def make_logit_lens_fn(model: AnyModel) -> DecodeFn:
+def make_logit_lens_fn(model: StandardTransformer) -> DecodeFn:
     """Create a logit lens DecodeFn from a model."""
     final_norm = model.final_norm
     emb_weight = model.tok_emb.weight
@@ -59,7 +59,7 @@ def make_logit_lens_fn(model: AnyModel) -> DecodeFn:
 @torch.no_grad()
 def probe_predict_position(
     residuals: list[Tensor],
-    examples: list[S3Example],
+    examples: list[ChainExample],
     decode_fn: DecodeFn,
     k: int,
     device: torch.device,
@@ -91,7 +91,7 @@ def probe_predict_position(
 @torch.no_grad()
 def probe_op_positions(
     residuals: list[Tensor],
-    examples: list[S3Example],
+    examples: list[ChainExample],
     decode_fn: DecodeFn,
     k: int,
     device: torch.device,
@@ -127,8 +127,8 @@ def probe_op_positions(
 
 @torch.no_grad()
 def analyze_predict_position(
-    model: AnyModel,
-    examples: list[S3Example],
+    model: StandardTransformer,
+    examples: list[ChainExample],
     device: torch.device,
 ) -> Tensor:
     """Logit lens at <predict> position across all layers.
@@ -155,8 +155,8 @@ def analyze_predict_position(
 
 @torch.no_grad()
 def analyze_op_positions(
-    model: AnyModel,
-    examples: list[S3Example],
+    model: StandardTransformer,
+    examples: list[ChainExample],
     device: torch.device,
 ) -> Tensor:
     """Logit lens at <op> token positions across layers.
