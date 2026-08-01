@@ -12,12 +12,16 @@ Figures:
   3. churn.png        — per-frequency power churn vs output accuracy
   4. coalescence.png  — LEGO answer-coalescence layer vs hop count
   5. formation.png    — circuit concentration during formation
+  6. probes.png       — LEGO probe-vs-lens at the supervised position
+                        (needs the JSON from
+                        `lego.analyze_probes --json-out data/analysis/probes.json`)
 
 Usage:
     uv run python -m grok_lens.make_figures
 """
 
 import argparse
+import json
 import re
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -377,10 +381,93 @@ def fig_formation(api: wandb.Api, outdir: Path) -> None:
         print(f"  {kind}: {pretty}")
 
 
+def fig_probes(outdir: Path, probes_json: Path) -> None:
+    """Probe vs lens at the <predict> position (LEGO, k = 4): intermediates
+    are linearly present in lens-dark directions in both arms; only in aux
+    runs does the lens track the linearly-present answer."""
+    results = json.loads(probes_json.read_text())
+    arms = [
+        ("baseline", "S3-std-8L-splitku-base-s{s}", VERM),
+        ("aux uniform λ=0.3", "S3-std-8L-splitku-lensaux0.3-uniform-s{s}", BLUE),
+    ]
+    k = 4
+    fig, axes = plt.subplots(2, 2, figsize=(7.2, 4.4), dpi=160, sharex=True)
+    for col, (title, pattern, color) in enumerate(arms):
+        for seed in SEEDS:
+            r = results[pattern.format(s=seed)][f"k{k}"]
+            probe = r["probe_eval_acc"]
+            lens = r["lens_eval_acc"]
+            layers = range(len(probe))
+            bold = seed == 42
+            lw = 1.6 if bold else 0.8
+            alpha = 1.0 if bold else 0.35
+            # row 0: best intermediate state (j = 1..k-1) per layer
+            axes[0][col].plot(
+                layers,
+                [max(row[1:k]) for row in probe],
+                color=color,
+                lw=lw,
+                alpha=alpha,
+                label="linear probe" if bold else None,
+            )
+            axes[0][col].plot(
+                layers,
+                [max(row[1:k]) for row in lens],
+                color=color,
+                lw=lw,
+                alpha=alpha,
+                ls="--",
+                label="logit lens" if bold else None,
+            )
+            # row 1: the answer (j = k) per layer
+            axes[1][col].plot(
+                layers,
+                [row[k] for row in probe],
+                color=color,
+                lw=lw,
+                alpha=alpha,
+            )
+            axes[1][col].plot(
+                layers,
+                [row[k] for row in lens],
+                color=color,
+                lw=lw,
+                alpha=alpha,
+                ls="--",
+            )
+        axes[0][col].set_title(title, fontsize=9.5, loc="left")
+        axes[1][col].set_xlabel("layer", fontsize=9)
+        for row in (0, 1):
+            ax = axes[row][col]
+            ax.axhline(1 / 6, color=GRAY, lw=0.8, ls=":")
+            ax.set_ylim(-0.03, 1.06)
+            style(ax)
+    axes[0][0].set_ylabel("best intermediate state\nheld-out accuracy", fontsize=9)
+    axes[1][0].set_ylabel("final answer\nheld-out accuracy", fontsize=9)
+    axes[0][0].legend(frameon=False, fontsize=8.5, loc="upper left")
+    axes[0][0].text(6.9, 1 / 6 + 0.03, "chance", fontsize=7.5, color=GRAY)
+    fig.suptitle(
+        "The supervised position, probed (k = 4 chains): intermediates live in\n"
+        "lens-dark directions either way; only aux models' lens tracks the answer",
+        fontsize=9.5,
+        x=0.02,
+        ha="left",
+    )
+    fig.tight_layout(rect=(0, 0, 1, 0.93))
+    fig.savefig(outdir / "probes.png", bbox_inches="tight")
+    plt.close(fig)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.parse_args()
-    outdir = Path(__file__).parent / "figures"
+    parser.add_argument(
+        "--probes-json",
+        type=Path,
+        default=Path("data/analysis/probes.json"),
+        help="Output of lego.analyze_probes --json-out (probes.png input)",
+    )
+    args = parser.parse_args()
+    outdir = Path(__file__).resolve().parents[1] / "figures"
     outdir.mkdir(exist_ok=True)
     api = wandb.Api()
     fig_occupancy(api, outdir)
@@ -393,6 +480,14 @@ def main() -> None:
     print("coalescence.png done")
     fig_formation(api, outdir)
     print("formation.png done")
+    if args.probes_json.exists():
+        fig_probes(outdir, args.probes_json)
+        print("probes.png done")
+    else:
+        print(
+            f"probes.png skipped: {args.probes_json} not found "
+            "(run lego.analyze_probes --json-out first)"
+        )
 
 
 if __name__ == "__main__":
