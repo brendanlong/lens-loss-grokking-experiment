@@ -1144,7 +1144,8 @@ non-converged aux cells — "below ℓ\*" means all 8 layers.)
    confirmed in the direction sense, in both arms.** Intermediate
    trajectory states are substantially linearly recoverable from the
    supervised position's residual at layers where the lens reads
-   near-chance (best cells 0.55–0.95 vs lens ≤ 0.34). The supervised
+   near-chance (best cells 0.55–0.95 vs lens ≤ 0.34 at k ∈ {4, 6};
+   the tiny k=2 stratum reaches lens 0.42). The supervised
    position is not answer-subspace-only: it carries intermediates in
    lens-invisible directions. This is a property of the architecture/task,
    not of the aux loss — baselines show it at least as strongly.
@@ -1270,10 +1271,13 @@ transitions.
 **Findings.**
 1. **The first-arrival delay reverses sign when depth is required.** On
    the arithmetic tasks the aux loss delayed first grokking ~2–4.7×; on
-   LEGO-in-a-grokking-regime it *accelerates* every stage on every
-   seed-matched comparison at k ≥ 4 (median k6 first crossing: aux
+   LEGO-in-a-grokking-regime it *accelerates* every k ≥ 4 stage in the
+   two slow-baseline seeds and on the median (k6 first crossing: aux
    15.5k vs baseline 90.5k, with one baseline seed never crossing in
-   100k) and compresses the whole staircase into ~8–18.5k steps.
+   100k), compressing the whole staircase into ~8–18.5k steps. The
+   fast-baseline outlier s43 crosses each stage slightly before its aux
+   counterpart — acceleration is a median/2-of-3-seed effect; what is
+   3/3 is that aux timing never blows up while baseline timing can.
 2. **Baseline first-crossing is heavy-tailed across seeds** (k6 range
    16.5k → never); aux is tight (13.5–18.5k). The aux loss regularizes
    the transition's *timing*, not just its stability.

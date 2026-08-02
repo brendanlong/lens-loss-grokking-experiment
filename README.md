@@ -40,7 +40,9 @@ modular arithmetic and a multi-hop composition task:
    weight decay) and it grokks *per hop-count in stages*, with the
    baseline sawtooth reappearing on schedule — and the aux loss, which
    cannot collapse this computation into one block, **accelerates the
-   full staircase ~6× while still making it stick**. Linear probes add
+   full staircase ~6× at the median seed while still making it
+   stick** (baseline stage-timing is heavy-tailed across seeds; aux
+   timing is tight). Linear probes add
    the complementary finding: intermediate states live in lens-invisible
    directions of the supervised residual in both arms; what the
    supervision aligns with the lens is exactly the answer.
