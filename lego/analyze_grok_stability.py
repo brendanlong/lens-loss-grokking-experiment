@@ -20,15 +20,9 @@ PROJECT = "brendanlong-com/grok-lens"
 REPORT_KS = (2, 3, 4, 5, 6)
 
 
-def series(
-    hist: list[dict[str, float]], key: str
-) -> tuple[list[int], list[float]]:
+def series(hist: list[dict[str, float]], key: str) -> tuple[list[int], list[float]]:
     """(steps, values) for one metric, skipping evals where it's absent."""
-    pairs = [
-        (int(h["_step"]), float(h[key]))
-        for h in hist
-        if h.get(key) is not None
-    ]
+    pairs = [(int(h["_step"]), float(h[key])) for h in hist if h.get(key) is not None]
     return [s for s, _ in pairs], [v for _, v in pairs]
 
 
@@ -76,11 +70,7 @@ def main() -> None:
         hist = sorted(run.scan_history(), key=lambda h: h["_step"])
         train_steps, train_accs = series(hist, "train/answer_acc")
         memorize = next(
-            (
-                s
-                for s, a in zip(train_steps, train_accs, strict=True)
-                if a >= 0.95
-            ),
+            (s for s, a in zip(train_steps, train_accs, strict=True) if a >= 0.95),
             None,
         )
         mean_steps, mean_accs = series(hist, "test_acc/mean")
