@@ -1290,7 +1290,7 @@ transitions.
    0.997–1.000 incl. k0/k1), unlike the promptly-generalizing regime's
    k ≤ 1 losses.
 
-**Caveats.** Run-to-run variance in this regime is substantial even at
+**Caveats (Phase 8 head-to-head).** Run-to-run variance in this regime is substantial even at
 fixed seed-relevant config: the 50k search run at the same cell/seed
 (663lqx6q) crossed k2 at 16k with 10 dips where the 100k rerun
 (b7780wrm, identical settings for its first 50k) crossed at 20k with 1 —
@@ -1301,3 +1301,43 @@ above rest on the 3-seed contrasts, not single runs. Baseline
 instability at wd 0.3 is milder than the arithmetic-task sawtooth; the
 search showed it scales with wd (34–35 dips per k at wd 1.0), so the
 stability contrast here is conservative.
+
+### 2026-08-02 — Phase 9, data-rich pair: the realistic full-sequence objective slows the task; full-sequence deep supervision on top of it kills it
+
+Phase 9 (EXPERIMENT_PLAN) corrects the Phase 5 framing: supervise **all**
+positions, as a real LM would be trained, and ask whether deep
+supervision hurts. New `--base-loss all-positions` = final-layer
+next-token CE at every non-pad position. Data-rich regime (canonical
+40-epoch settings), seed 42, SkyPilot jobs 174–175 (~20 min each):
+
+```
+uv run python -m lego.train --base-loss all-positions --seed 42 \
+  --wandb-run-name S3-std-8L-splitku-fullseqbase-s42 --checkpoint-dir <dir>
+uv run python -m lego.train --base-loss all-positions --lens-aux \
+  --lens-aux-weight 0.3 --lens-aux-mode all-positions --seed 42 \
+  --wandb-run-name S3-std-8L-splitku-fullseq-lensaux0.3-allpos-s42 --checkpoint-dir <dir>
+```
+
+(Run via `sky exec local-gpu skypilot/local.yaml` as in Phase 8; launch
+env identical.) Held-out accuracy at the matched 20,960-step budget,
+wandb 4qx4msct / y8blx6eq:
+
+| arm | k2 | k3 | k4 | k5 | k6 | mean |
+|---|---|---|---|---|---|---|
+| answer-only base (canonical, for reference) | 1.00 | 1.00 | 1.00 | 1.00 | 1.00 | ~1.00 |
+| full-seq base, no aux | 0.51 | 0.76 | 0.79 | 0.62 | 0.46 | 0.49 |
+| full-seq base + full-seq aux λ=0.3 | 0.09 | 0.08 | 0.14 | 0.16 | 0.16 | 0.16 (chance) |
+
+The realistic base objective alone already slows task acquisition badly
+at matched budget (train answer accuracy never reaches 0.95); adding
+full-sequence deep supervision reduces the model to chance on every
+stratum. Position-by-position lens/probe readouts (`analyze_fullseq`,
+CPU sanity pass; the recorded GPU pass is job 182): the full-seq aux
+model's lens is *perfectly legible everywhere* — structural next tokens
+(the `<op>`/`<predict>` markers) read at 1.00 from layer 0, and the
+`<predict>` distribution sits at exactly ln 6 entropy at every layer for
+k = 4 — while probes find no intermediates because the model never
+computes any. Deep supervision made every layer answer-shaped and the
+task died: legibility without competence. P2's lens-vs-probe contrast is
+therefore evaluable only on arms that learn (the full-seq base, and the
+grokking-regime arms below).
