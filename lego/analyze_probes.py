@@ -74,35 +74,6 @@ def predict_position_residuals(
     return torch.cat(chunks, dim=1).float()
 
 
-@torch.no_grad()
-def op_position_residuals(
-    model: StandardTransformer,
-    examples: list[ChainExample],
-    j: int,
-    device: torch.device,
-    batch_size: int = 512,
-) -> Tensor:
-    """Residuals at the <op> position after operand j+1, every layer.
-
-    Position 2*(j+2) is the first position that has causally seen the
-    start element and operands 1..j+1 (same grid as probe_op_positions;
-    for j = k-1 this is the <predict> position). Returns
-    (n_layers, n_examples, dim), fp32.
-    """
-    pos = 2 * (j + 2)
-    chunks: list[Tensor] = []
-    for i in range(0, len(examples), batch_size):
-        chunk = examples[i : i + batch_size]
-        input_ids = torch.tensor(
-            [encode(ex) for ex in chunk],
-            dtype=torch.long,
-            device=device,
-        )
-        _logits, residuals = model.forward_with_residuals(input_ids)
-        chunks.append(torch.stack([r[:, pos, :] for r in residuals]))
-    return torch.cat(chunks, dim=1).float()
-
-
 def trajectory_targets(examples: list[ChainExample], device: torch.device) -> Tensor:
     """Element-class targets, shape (k+1, n_examples), values 0..5."""
     n_states = len(examples[0].ops) + 1
