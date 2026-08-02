@@ -77,6 +77,9 @@ class LegoTrainingConfig(BaseModel):
     # lens_aux_mode "answer" supervises intermediate layers at the
     # <predict> position only; "all-positions" applies next-token
     # logit-lens CE at every non-pad position.
+    # Base objective: answer-only CE (default) or the realistic
+    # full-sequence next-token CE at every non-pad position.
+    base_loss: Literal["answer", "all-positions"] = "answer"
     lens_aux: bool = False
     lens_aux_weight: float = 0.3
     lens_aux_weighting: Literal["uniform", "linear"] = "uniform"

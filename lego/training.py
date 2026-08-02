@@ -24,6 +24,7 @@ from lego.generator import ChainExample
 from lego.losses import (
     compute_answer_accuracy,
     compute_answer_only_loss,
+    compute_full_sequence_loss,
     compute_lens_aux_loss,
     compute_lens_aux_loss_all_positions,
 )
@@ -162,6 +163,7 @@ def train_lego_model(
     weight_decay: float = 0.0,
     lr_schedule: Literal["cosine", "constant"] = "cosine",
     use_compile: bool = True,
+    base_loss: Literal["answer", "all-positions"] = "answer",
     lens_aux: bool = False,
     lens_aux_weight: float = 0.3,
     lens_aux_weighting: Literal["uniform", "linear"] = "uniform",
@@ -240,11 +242,14 @@ def train_lego_model(
                 logits = model(input_ids)
                 residuals = None
 
-            base_loss = compute_answer_only_loss(
-                logits,
-                input_ids,
-                answer_positions,
-            )
+            if base_loss == "all-positions":
+                step_base_loss = compute_full_sequence_loss(logits, input_ids)
+            else:
+                step_base_loss = compute_answer_only_loss(
+                    logits,
+                    input_ids,
+                    answer_positions,
+                )
             aux_loss = torch.tensor(0.0, device=device)
 
             step_lens_loss = torch.tensor(0.0, device=device)
@@ -269,13 +274,13 @@ def train_lego_model(
                     )
                 aux_loss = aux_loss + lens_aux_weight * step_lens_loss
 
-            loss = base_loss + aux_loss
+            loss = step_base_loss + aux_loss
             loss.backward()
             optimizer.step()
             optimizer.zero_grad(set_to_none=True)
             scheduler.step()
 
-            running_loss += base_loss.detach()
+            running_loss += step_base_loss.detach()
             if lens_aux:
                 running_lens_loss += step_lens_loss.detach()
             running_acc += compute_answer_accuracy(

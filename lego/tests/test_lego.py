@@ -830,3 +830,39 @@ class TestTotalStepsBudget:
             use_wandb=False,
         )
         assert result.total_steps == 3
+
+
+class TestFullSequenceLoss:
+    def test_shift_and_mask(self) -> None:
+        """Loss scores next tokens only at non-pad targets, with the
+        standard autoregressive shift."""
+        from lego.losses import compute_full_sequence_loss
+
+        ex = make_example(2, (1, 3))
+        ids = torch.tensor([encode_padded(ex, k_max=3)])  # padded to len 10
+        n_real = len(encode(ex))  # 8 tokens; targets = positions 1..7
+        vocab = VOCAB_SIZE
+        # Perfect logits on the real next tokens -> loss ~ 0
+        logits = torch.full((1, ids.shape[1], vocab), -10.0)
+        for t in range(ids.shape[1] - 1):
+            if ids[0, t + 1] != PAD_ID:
+                logits[0, t, ids[0, t + 1]] = 10.0
+        loss = compute_full_sequence_loss(logits, ids)
+        assert loss.item() < 1e-4
+        # Corrupting a PAD-target position must not change the loss
+        logits2 = logits.clone()
+        logits2[0, n_real, :] = torch.randn(vocab)
+        assert torch.allclose(loss, compute_full_sequence_loss(logits2, ids))
+        # Corrupting the answer target (predict position) must change it
+        logits3 = logits.clone()
+        logits3[0, n_real - 2, ids[0, n_real - 1]] = -10.0
+        assert compute_full_sequence_loss(logits3, ids) > loss + 0.1
+
+    def test_answer_position_included(self) -> None:
+        """The answer token is a next-token target (at <predict>)."""
+        ex = make_example(0, (1,))
+        ids = torch.tensor([encode(ex)])
+        pos = answer_position(1)
+        assert ids[0, pos] == element_token(ex.trajectory[-1])
+        # <predict> is at pos-1, so logits there score the answer
+        assert ids[0, pos - 1] == PREDICT_TOKEN

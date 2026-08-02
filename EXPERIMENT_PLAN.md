@@ -268,6 +268,52 @@ Small-strata caveat: at small train-set sizes the k ≤ 1 strata are tiny;
 report per-k over k ≥ 2 and keep the split-seed = training-seed
 convention so analyses reconstruct each run's split.
 
+## Phase 9 (extension): full-sequence supervision — the realistic, adversarial form
+
+Added 2026-08-02, correcting a misunderstanding in the Phase 5 design.
+Phase 5 supervised the answer position only, which aligns the supervision
+with the graded quantity — a setting where deep supervision turned out to
+be benign-to-helpful. The original question (Brendan) was the opposite
+one: in a *realistic* LM setup every position is trained next-token, so
+apply the deep supervision to **all** positions and ask whether it hurts.
+
+**Pre-registered predictions (Brendan):**
+- P1: full-sequence deep supervision makes the task harder and may delay
+  or break grokking in the Phase 8 regime (in contrast to answer-only
+  aux, which accelerates it there).
+- P2: under full-sequence supervision the logit lens shows the output
+  token's progression extremely clearly — a broad distribution
+  sharpening to the right token across layers — but shows the
+  intermediate trajectory values *not at all*, even where linear probes
+  recover them. (The op-position staircase visible in answer-only
+  models' lenses should be erased: those positions' lens directions are
+  now spent on next-token targets, which are uniform-random operands.)
+
+**Design.**
+- New `--base-loss all-positions`: final-layer next-token CE at every
+  non-pad position (the answer remains readable as next-token at
+  `<predict>`; per-k answer accuracy stays the capability metric).
+- Arms, both with the full-sequence base loss: no aux vs
+  `--lens-aux --lens-aux-mode all-positions --lens-aux-weight 0.3`.
+- Grokking regime (Phase 8 cell: sub10000, wd 0.3, constant LR, 100k,
+  3 seeds each) for P1; data-rich regime (canonical 40-epoch settings,
+  seed 42 first) for P2's lens/probe analysis on models that certainly
+  learn.
+- Analysis, per (position, layer), on held-out chains (Brendan's
+  three-readout spec):
+  1. **Own-output progression**: lens top-1 vs that position's actual
+     next token, plus lens entropy — expect a clean distribution →
+     sharpened-token progression at every position (at positions whose
+     next token is a uniform-random operand, "clean" means calibrated
+     near-uniform over elements, the CE-optimal prediction).
+  2. **Intermediates in the lens**: lens top-1 vs trajectory[j] for
+     every intermediate j, at every position — expect maybe-visible in
+     the no-aux baseline (the answer-only models' op-position staircase
+     is the precedent), invisible under full-sequence aux.
+  3. **Intermediates via probes**: plain linear probes for
+     trajectory[j] at every position — expect recoverable in both
+     arms, and at earlier layers under the aux loss.
+
 ## References
 
 - Power et al. 2022 — Grokking (arXiv:2201.02177)

@@ -77,6 +77,16 @@ def main() -> None:
 
     # Training
     parser.add_argument(
+        "--base-loss",
+        default="answer",
+        choices=["answer", "all-positions"],
+        help=(
+            "answer: CE at the <predict> position only (default); "
+            "all-positions: next-token CE at every non-pad position "
+            "(the realistic LM objective)."
+        ),
+    )
+    parser.add_argument(
         "--lens-aux",
         action="store_true",
         help=(
@@ -180,6 +190,7 @@ def main() -> None:
         test_frac=args.test_frac,
         train_subset=args.train_subset,
         total_steps=args.total_steps,
+        base_loss=args.base_loss,
         lens_aux=args.lens_aux,
         lens_aux_weight=args.lens_aux_weight,
         lens_aux_weighting=args.lens_aux_weighting,
@@ -274,6 +285,7 @@ def main() -> None:
     model = StandardTransformer(model_config)
     model = model.to(device)
 
+    print(f"Base loss: {config.base_loss}")
     if config.lens_aux:
         print(
             f"Lens aux loss: enabled (mode={config.lens_aux_mode}, "
@@ -302,6 +314,7 @@ def main() -> None:
         weight_decay=config.weight_decay,
         lr_schedule=config.lr_schedule,
         use_compile=not args.no_compile,
+        base_loss=config.base_loss,
         lens_aux=config.lens_aux,
         lens_aux_weight=config.lens_aux_weight,
         lens_aux_weighting=config.lens_aux_weighting,
