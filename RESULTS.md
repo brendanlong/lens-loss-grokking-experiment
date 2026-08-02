@@ -1164,3 +1164,59 @@ chains) have small fit–eval gaps (e.g. 0.99 vs 0.94). The lens argmaxes
 over the full 10-token vocab while probes are 6-way; this asymmetry is
 inherent to the pre-registered contrast and can only *help* the lens on
 the intermediate rows (its near-chance values are not an artifact).
+
+### 2026-08-01 — Phase 8 regime search: LEGO grokks, per-k, in stages — and the baseline sawtooth appears on a depth-requiring task
+
+Grokking-regime search (EXPERIMENT_PLAN Phase 8 step 1): train on a
+small per-k-waterfill subsample of the train split (`--train-subset`),
+AdamW constant LR 3e-4, batch 512, 50k steps, eval on the full held-out
+split every 500 steps. 3 subset sizes × 3 weight decays, seed 42.
+SkyPilot jobs 159–167 on the local cluster (~24 min each, RTX 3060 Ti):
+
+```
+for n in 2000 5000 10000; do for wd in 0.1 0.3 1.0; do
+  run="S3-grok-sub${n}-wd${wd}-s42-50k"
+  sky exec local-gpu skypilot/local.yaml -d \
+    --env RUN_NAME="$run" \
+    --env RUN_CMD="uv run python -m lego.train --train-subset ${n} --weight-decay ${wd} --lr-schedule constant --total-steps 50000 --eval-every-steps 500 --seed 42 --wandb-project grok-lens --wandb-run-name ${run} --checkpoint-dir \"\${CHECKPOINT_DIR}\"" \
+    --secret WANDB_API_KEY --secret AWS_ACCESS_KEY_ID --secret AWS_SECRET_ACCESS_KEY
+done; done
+```
+
+Per-k metrics from `lego.analyze_grok_stability` (first crossing ≥ 0.95
+/ dips < 0.90 after it / occupancy; wandb IDs in the project under the
+run names):
+
+| cell | memorize | k2 | k3 | k4 | k5 | k6 |
+|---|---|---|---|---|---|---|
+| sub2000-wd0.1 | 2000 | — (0.35) | — (0.24) | — (0.32) | — (0.33) | — (0.32) |
+| sub2000-wd0.3 | 2300 | — (0.33) | — (0.23) | — (0.31) | — (0.32) | — (0.30) |
+| sub2000-wd1.0 | 5400 | — (0.54) | — (0.29) | — (0.31) | — (0.33) | — (0.33) |
+| sub5000-wd0.1 | 4000 | — (0.63) | — (0.46) | — (0.37) | — (0.32) | — (0.32) |
+| sub5000-wd0.3 | 5300 | — (0.63) | — (0.44) | — (0.35) | — (0.31) | — (0.31) |
+| sub5000-wd1.0 | 18800 | 21.5k, 19 dips, occ 0.19 | — (0.77) | — (0.60) | — (0.40) | — (0.38) |
+| sub10000-wd0.1 | 6400 | 13.5k, 0, occ 0.89 | 13.5k, 0, occ 1.00 | 21.5k, 0, occ 0.98 | 33.5k, 0, occ 0.97 | 45k, 0, occ 0.55 |
+| sub10000-wd0.3 | 9400 | 16k, 10 dips, occ 0.49 | 32.5k, 0, occ 0.83 | — (0.90) | — (0.72) | — (0.34) |
+| sub10000-wd1.0 | 19000 | 12.5k, 34 dips, occ 0.53 | 12.5k, 35 dips, occ 0.53 | 15k, 34 dips, occ 0.45 | — (0.49) | — (0.41) |
+
+("—" = never crosses 0.95 in 50k; parenthesis = final accuracy.)
+
+**Findings.**
+1. **A grokking regime exists**: at 10k chains the model memorizes
+   (train 100% by 6–19k steps) then generalizes *per-k in stages* —
+   k2/k3 first, k6 last (sub10000-wd0.1: 13.5k → 45k) — the staged
+   transition the plan flagged as a result on its own. At 2k chains
+   nothing crosses (test drifts to ~0.3); 5k chains is marginal.
+2. **The baseline sawtooth appears on the depth-requiring task**, and
+   weight decay modulates it exactly as the two-ingredient account
+   predicts: wd 0.1 is near-stable post-crossing (0 dips), wd 0.3 gives
+   k2 10 dips / occupancy 0.49, wd 1.0 gives chronic instability (34–35
+   dips per crossed k, occupancy ~0.5, final accuracy *degrading* to
+   0.61–0.86). The LEGO model keeps LayerNorm — baseline instability
+   *if it grokks* was the pre-registered prediction.
+3. Under wd 1.0 memorization itself is late and entangled with the
+   transitions (memorize step 19k > k2 first crossing 12.5k) — the
+   plateau structure is cleanest at wd 0.3.
+
+**Phase 2 cell**: sub10000-wd0.3 (delayed staged generalization +
+visible instability + budget headroom), extended to 100k steps.
