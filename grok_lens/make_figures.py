@@ -15,6 +15,7 @@ Figures:
   6. probes.png       — LEGO probe-vs-lens at the supervised position
                         (needs the JSON from
                         `lego.analyze_probes --json-out data/analysis/probes.json`)
+  7. lego_grok.png    — LEGO grokking regime: per-k staircase, baseline vs aux
 
 Usage:
     uv run python -m grok_lens.make_figures
@@ -458,6 +459,55 @@ def fig_probes(outdir: Path, probes_json: Path) -> None:
     plt.close(fig)
 
 
+def fig_lego_grok(api: wandb.Api, outdir: Path) -> None:
+    """LEGO grokking regime (10k-chain subset, wd 0.3): per-k held-out
+    accuracy over training, baseline vs aux, one representative seed."""
+    ks = [2, 3, 4, 5, 6]
+    cmap = plt.get_cmap("viridis")
+    fig, axes = plt.subplots(1, 2, figsize=(7.6, 3.0), dpi=160, sharey=True)
+    for ax, (name, title) in zip(
+        axes,
+        [
+            ("S3-grok-sub10000-wd0.3-base-s44-100k", "baseline (seed 44)"),
+            (
+                "S3-grok-sub10000-wd0.3-lensaux0.3-uniform-s44-100k",
+                "aux λ=0.3 (seed 44)",
+            ),
+        ],
+        strict=True,
+    ):
+        run = next(r for r in api.runs("brendanlong-com/grok-lens") if r.name == name)
+        hist = sorted(
+            (h for h in run.scan_history() if h.get("test_acc/k_2") is not None),
+            key=lambda h: h["_step"],
+        )
+        steps = [h["_step"] for h in hist]
+        for i, k in enumerate(ks):
+            ax.plot(
+                steps,
+                [h[f"test_acc/k_{k}"] for h in hist],
+                color=cmap(0.1 + 0.8 * i / (len(ks) - 1)),
+                lw=1.1,
+                label=f"k={k}",
+            )
+        ax.set_title(title, fontsize=9.5, loc="left")
+        ax.set_xlabel("training step", fontsize=9)
+        ax.set_ylim(-0.03, 1.06)
+        style(ax)
+    axes[0].set_ylabel("held-out accuracy", fontsize=9)
+    axes[1].legend(frameon=False, fontsize=8, loc="lower right", ncols=2)
+    fig.suptitle(
+        "LEGO grokking regime: the baseline grokks per-k in stages and wobbles;\n"
+        "the aux loss compresses the staircase and holds it",
+        fontsize=9.5,
+        x=0.02,
+        ha="left",
+    )
+    fig.tight_layout(rect=(0, 0, 1, 0.90))
+    fig.savefig(outdir / "lego_grok.png", bbox_inches="tight")
+    plt.close(fig)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
@@ -480,6 +530,8 @@ def main() -> None:
     print("coalescence.png done")
     fig_formation(api, outdir)
     print("formation.png done")
+    fig_lego_grok(api, outdir)
+    print("lego_grok.png done")
     if args.probes_json.exists():
         fig_probes(outdir, args.probes_json)
         print("probes.png done")

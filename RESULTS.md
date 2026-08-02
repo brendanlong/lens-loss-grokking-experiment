@@ -14,6 +14,11 @@
 > [public project](https://wandb.ai/brendanlong-com/grok-lens).
 > `--save-checkpoint` in historical commands performed the private S3
 > upload and has no equivalent here (checkpoints always save locally).
+> Entries dated 2026-08-01 onward were run from this repo directly, via
+> `skypilot/local.yaml` on the maintainers' local cluster — those
+> commands are copy-pasteable as recorded (the S3 sync they reference is
+> the same private store; public checkpoint copies are on the HF
+> dataset under the same run names).
 
 Does a logit-lens auxiliary loss — every layer's residual stream projected
 through the shared unembedding and scored against the target — delay,
@@ -1220,3 +1225,75 @@ run names):
 
 **Phase 2 cell**: sub10000-wd0.3 (delayed staged generalization +
 visible instability + budget headroom), extended to 100k steps.
+
+### 2026-08-01 — Phase 8 main result: when depth is required, the aux loss *accelerates* staged grokking — and still stabilizes it
+
+Baseline vs aux λ = 0.3 uniform in the chosen grokking cell
+(sub10000-wd0.3, constant LR 3e-4, 100k steps, eval/500), 3 seeds each.
+SkyPilot jobs 168–173 (~47 min baseline / ~55 min aux per run):
+
+```
+for s in 42 43 44; do for arm in base lensaux; do
+  # base:    run="S3-grok-sub10000-wd0.3-base-s${s}-100k";                extra=""
+  # lensaux: run="S3-grok-sub10000-wd0.3-lensaux0.3-uniform-s${s}-100k"; extra="--lens-aux --lens-aux-weight 0.3"
+  sky exec local-gpu skypilot/local.yaml -d \
+    --env RUN_NAME="$run" \
+    --env RUN_CMD="uv run python -m lego.train --train-subset 10000 --weight-decay 0.3 --lr-schedule constant --total-steps 100000 --eval-every-steps 500 ${extra} --seed ${s} --wandb-project grok-lens --wandb-run-name ${run} --checkpoint-dir \"\${CHECKPOINT_DIR}\"" \
+    --secret WANDB_API_KEY --secret AWS_ACCESS_KEY_ID --secret AWS_SECRET_ACCESS_KEY
+done; done
+```
+
+Per-k first crossing (steps, per seed s42/s43/s44; `analyze_grok_stability`):
+
+| arm | k2 | k3 | k4 | k5 | k6 |
+|---|---|---|---|---|---|
+| baseline | 20k/6.5k/23.5k | 37.5k/6.5k/24k | 62k/7.5k/48.5k | 87k/9.5k/74.5k | **—**/16.5k/90.5k |
+| aux uniform | 9k/8.5k/10k | 9k/8.5k/8k | 9.5k/11.5k/8.5k | 12k/15.5k/10.5k | 15.5k/18.5k/13.5k |
+
+Post-crossing dips < 0.90 (summed over k) and occupancy range; final
+test mean:
+
+| arm | seed | total dips | occupancy (min–max over k) | final mean |
+|---|---|---|---|---|
+| baseline | 42 | 1 | 0.83–0.93 (k6 never crosses; 0.920 at end) | 0.932 |
+| baseline | 43 | 15 | 0.83–0.98 (k6: 11 dips) | 0.987 |
+| baseline | 44 | 14 | 0.89–0.95 | 0.969 |
+| aux | 42 | 1 | 0.98–1.00 | 1.000 |
+| aux | 43 | 4 | 0.95–0.99 | 0.997 |
+| aux | 44 | 1 | 0.87–1.00 (k2 occ 0.87 = borderline evals on the 43-example stratum, 0 dips) | 1.000 |
+
+wandb IDs: b7780wrm / kq5trf6k / dfhj5xcv (base),
+fqarlnit / 4aahoi1b / nspjct9b (aux). Memorize steps 7.2–10.7k (base),
+8.4–8.9k (aux) — both arms have a genuine plateau before the k ≥ 3
+transitions.
+
+**Findings.**
+1. **The first-arrival delay reverses sign when depth is required.** On
+   the arithmetic tasks the aux loss delayed first grokking ~2–4.7×; on
+   LEGO-in-a-grokking-regime it *accelerates* every stage on every
+   seed-matched comparison at k ≥ 4 (median k6 first crossing: aux
+   15.5k vs baseline 90.5k, with one baseline seed never crossing in
+   100k) and compresses the whole staircase into ~8–18.5k steps.
+2. **Baseline first-crossing is heavy-tailed across seeds** (k6 range
+   16.5k → never); aux is tight (13.5–18.5k). The aux loss regularizes
+   the transition's *timing*, not just its stability.
+3. **Stabilization survives where the shallow-collapse exit is closed.**
+   Baselines show the sawtooth in 2/3 seeds (15 and 14 dips; the
+   s42 exception has only 1 dip but chronic sub-0.95 wobble, occupancy
+   0.83–0.93); aux runs are near-absorbing in 3/3 (≤ 1 dip per k,
+   occupancy 0.95–1.00 modulo the k2 small-stratum note).
+4. **No short-chain capability cost in this regime** (final mean
+   0.997–1.000 incl. k0/k1), unlike the promptly-generalizing regime's
+   k ≤ 1 losses.
+
+**Caveats.** Run-to-run variance in this regime is substantial even at
+fixed seed-relevant config: the 50k search run at the same cell/seed
+(663lqx6q) crossed k2 at 16k with 10 dips where the 100k rerun
+(b7780wrm, identical settings for its first 50k) crossed at 20k with 1 —
+GPU nondeterminism moves threshold crossings and dip counts; the
+qualitative phenotype (staged transitions; baseline instability; aux
+acceleration + stability) is consistent everywhere, and all claims
+above rest on the 3-seed contrasts, not single runs. Baseline
+instability at wd 0.3 is milder than the arithmetic-task sawtooth; the
+search showed it scales with wd (34–35 dips per k at wd 1.0), so the
+stability contrast here is conservative.
