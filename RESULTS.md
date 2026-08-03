@@ -1341,3 +1341,55 @@ computes any. Deep supervision made every layer answer-shaped and the
 task died: legibility without competence. P2's lens-vs-probe contrast is
 therefore evaluable only on arms that learn (the full-seq base, and the
 grokking-regime arms below).
+
+### 2026-08-02 — Phase 9, grokking regime: under the realistic objective the aux loss delays or breaks grokking and stabilizes nothing
+
+Same cell and settings as the Phase 8 head-to-head (sub10000, wd 0.3,
+constant LR, 100k, eval/500), with the full-sequence base loss; aux arm
+adds `--lens-aux --lens-aux-mode all-positions --lens-aux-weight 0.3`.
+SkyPilot jobs 176–181 (~42 min base / ~55 min aux per run); commands as
+in the data-rich entry plus the Phase 8 grokking flags. wandb:
+rjqa6atc / 4ledieft / ul1z17eh (base), peyc9taf / pg5o9enz / 88c2es51
+(aux).
+
+Per-k first crossing (s42/s43/s44):
+
+| arm | memorize | k2 | k3 | k4 | k5 | k6 |
+|---|---|---|---|---|---|---|
+| full-seq base | 17.1k/15.5k/19.9k | 12.5k/14.5k/17k | 20k/13.5k/19.5k | —/14.5k/— | —/17k/— | —/21.5k/— |
+| full-seq + aux | 40k/52.4k/22.3k | 30.5k/—/30.5k | 56k/—/19k | —/—/21k | —/—/37k | —/—/— |
+
+Post-crossing dips < 0.90 / occupancy at the crossed strata:
+
+| run | worst strata |
+|---|---|
+| base s42 | k2: 69 dips, occ 0.25; k3: occ 0.11 |
+| base s43 | k6: 122 dips, occ 0.04 (k2–k5 occ 0.87–1.00) |
+| base s44 | k2: 154 dips, occ 0.01; k3: 66 dips, occ 0.04 |
+| aux s42 | k3: 30 dips, occ 0.01; k2: 7 dips, occ 0.69 |
+| aux s43 | nothing ever crosses (final k2/k3 0.67/0.81) |
+| aux s44 | k5: 27 dips, occ 0.02 (k2–k4: 3–5 dips, occ 0.91–0.94) |
+
+Final test mean: base 0.38/0.88/0.37; aux 0.45/0.18/0.74.
+
+**Findings (P1 scorecard).**
+1. **The realistic base objective alone degrades both speed and
+   stability**: vs the answer-only baseline in the same cell, staged
+   grokking still happens but only 1/3 seeds completes the staircase in
+   100k, and the sawtooth is far more violent (69–154 dips at the worst
+   stratum vs ≤ 15 total for answer-only baselines).
+2. **Full-sequence deep supervision on top is destructive, 3/3 seeds**:
+   memorization is delayed 1.3–3.4×, every measurable first crossing is
+   delayed ~1.4–2.8× (or never happens — one seed crosses nothing in
+   100k), k6 never crosses in any seed, and there is no stabilization
+   anywhere (the crossed strata dip chronically; no run is remotely
+   near-absorbing). The delay-and-destabilize phenotype is the mirror
+   image of the answer-shaped aux in the identical cell
+   (accelerate-and-stabilize).
+3. Together with the data-rich pair: whether deep supervision helps or
+   harms is entirely a property of *what is supervised*. Supervising a
+   true, task-relevant quantity (the answer) at one position is benign
+   to strongly beneficial; supervising every position's next token —
+   most of which are irreducible noise on this task — is harmful at the
+   base level and disastrous as per-layer supervision, consistent with
+   the shuffled-target specificity control on the arithmetic tasks.
