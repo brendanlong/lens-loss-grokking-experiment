@@ -299,6 +299,13 @@ apply the deep supervision to **all** positions and ask whether it hurts.
   3 seeds each) for P1; data-rich regime (canonical 40-epoch settings,
   seed 42 first) for P2's lens/probe analysis on models that certainly
   learn.
+- Dose-response follow-up (added after the λ = 0.3 results): full-seq
+  aux at λ ∈ {0.01, 0.1}, data-rich, seed 42. Question: is the harm
+  presence-not-strength, like the answer-shaped benefits were on the
+  arithmetic tasks, or dose-dependent? Open prediction either way —
+  presence-not-strength would mean any per-layer noise-target pressure
+  suffices to block the task; dose-dependence would locate a usable
+  low-λ regime.
 - Analysis, per (position, layer), on held-out chains (Brendan's
   three-readout spec):
   1. **Own-output progression**: lens top-1 vs that position's actual
