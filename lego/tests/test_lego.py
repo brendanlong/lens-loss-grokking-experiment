@@ -866,3 +866,13 @@ class TestFullSequenceLoss:
         assert ids[0, pos] == element_token(ex.trajectory[-1])
         # <predict> is at pos-1, so logits there score the answer
         assert ids[0, pos - 1] == PREDICT_TOKEN
+
+
+class TestRunSeed:
+    def test_suffix_and_infix(self) -> None:
+        from lego.compare_lens_aux import run_seed
+
+        assert run_seed("S3-std-8L-splitku-base-s42") == 42
+        assert run_seed("S3-grok-sub10000-wd0.3-fullseqbase-s43-100k") == 43
+        with pytest.raises(ValueError, match="no -s<seed> suffix"):
+            run_seed("S3-grok-sub10000-wd0.3")
