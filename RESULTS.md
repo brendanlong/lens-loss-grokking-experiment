@@ -1447,6 +1447,40 @@ finding that the answer-shaped *benefits* are flat from λ = 0.01 to
 is present and what it points at, not how hard it pushes. (Single seed
 per λ, one regime.)
 
+### 2026-08-02 — Phase 9 learnability check: the full-sequence base objective converges given budget; the full-sequence aux failure is not a budget or difficulty artifact
+
+Before interpreting full-sequence grokking dynamics, establish that the
+objective can be trained at all (SkyPilot jobs 188–193, seed 42;
+`--n-epochs 120` for k6ext, `--k-max 4/3 --total-steps 20000` for the
+easier tasks; wandb qajoz9rz / odxejh03 / z8rcvn3a / xxopj1kw /
+dusvswcb / and the k3-aux run):
+
+| config | base (no aux) | + full-seq aux λ = 0.3 |
+|---|---|---|
+| k_max=6, 21k steps (matched budget) | 0.49 partial | 0.16 chance |
+| k_max=6, 63k steps (3× budget) | **0.983** (k3–k6 cross 13k/16k/23k/35k; k2 stratum 0.67, never crosses) | **0.164 chance** |
+| k_max=4, 20k steps | 0.945 (k3 crosses 9.5k) | 0.117 chance |
+| k_max=3, 20k steps | 0.40 (1,243 train chains — data-starved, not comparable) | chance |
+
+**Findings.**
+1. **The full-sequence base objective is trainable to near-full task
+   competence** — the matched-budget deficit was a budget effect, not a
+   learnability failure. Grokking-dynamics claims about the full-seq
+   baseline therefore rest on a demonstrably learnable objective.
+   (Anomaly worth flagging: the 43-example k=2 stratum lags badly under
+   full-sequence training in every run that otherwise converges —
+   0.67–0.84 — where answer-only training gets it to 1.00.)
+2. **The full-sequence aux failure survives every margin we gave it**:
+   3× budget at k_max=6, an easier task (k_max=4) that the base solves
+   within the same 20k budget, and λ down to 0.01 (dose-response entry).
+   Its inability to learn in the data-rich regime is a property of the
+   objective combination, not of budget, task size, or weight. (The
+   grokking-regime aux runs' partial learning — k2–k4 in 2/3 seeds —
+   remains the only setting where this arm learns anything; contrast
+   scoped accordingly.)
+3. k_max=3 leaves only 1,554 total chains, too few for the data-rich
+   framing; k_max=4 is the right "easier task" control.
+
 **P2 confirmed, strengthened.** The pre-registered prediction was that
 full-sequence deep supervision would make intermediates lens-invisible
 while probes still find them; what the data show is that the
