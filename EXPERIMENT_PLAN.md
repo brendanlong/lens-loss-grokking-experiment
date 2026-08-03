@@ -316,6 +316,17 @@ apply the deep supervision to **all** positions and ask whether it hurts.
   task is not plausibly one attention-then-lookup layer (k = 3 is
   borderline: a 4-token product has only 1296 combinations). Grokking
   claims get conditioned on whichever of these succeeds.
+- Long-horizon aux check (added after the learnability results;
+  Brendan): does the full-seq aux arm *eventually* learn, or is the
+  layer-0-satisfiable marginal solution a terminal basin? k_max = 4,
+  λ = 0.3 all-positions on the full-seq base, 200k steps (10× the
+  budget at which the base converges). Working hypothesis from the
+  data so far: the per-layer noise targets admit a trivial solution
+  (structural tokens + calibrated marginals, achievable at layer 0)
+  that the diluted answer gradient cannot escape in the data-rich
+  regime — the 63k k_max=6 aux run is flat at chance with no drift.
+  Counter-possibility worth the run: flat-then-sudden is what grokking
+  looks like.
 - Analysis, per (position, layer), on held-out chains (Brendan's
   three-readout spec):
   1. **Own-output progression**: lens top-1 vs that position's actual
