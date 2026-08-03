@@ -32,15 +32,17 @@ modular arithmetic and a multi-hop composition task:
 4. Controls: the effect is specific to *answer-shaped* supervision (a
    weight-decay sweep and a shuffled-target control both fail to
    reproduce it), and the story replicates on modular subtraction.
-5. **Extending to a model that needs intermediates — trained like a
-   real LM — deep supervision turns hostile.** On k-hop group
-   composition trained with next-token loss at every position (where
-   most targets are irreducible noise), the task grokks *per hop-count
-   in stages* with a violent baseline sawtooth, and per-layer deep
-   supervision delays or outright prevents the transition (presence,
-   not strength: λ = 0.01 is as fatal as λ = 0.3) while making every
-   layer's lens perfectly legible — at chance. Legibility without
-   competence.
+5. **The signature dynamics recur on a very different model — except
+   the stabilization.** On k-hop group composition — deep,
+   multi-position, trained like a real LM (next-token loss at every
+   position, where most targets are irreducible noise) — the task
+   grokks *per hop-count in stages* and the baseline sawtooth
+   reappears; deep supervision again delays the transition, and the
+   dose-response is again flat (λ = 0.01 acts like λ = 0.3 — now on
+   the cost side: at matched data-rich budget any λ pins the model at
+   chance while making every layer's lens perfectly legible).
+   Stabilization is what doesn't transfer: post-transition outcomes
+   are seed-heterogeneous.
 6. **The lens shows the loss; probes show the computation.** In models
    that demonstrably solve multi-hop strata, the intermediate states
    are linearly recoverable from the residual stream (~1.0) yet
