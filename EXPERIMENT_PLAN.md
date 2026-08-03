@@ -306,6 +306,16 @@ apply the deep supervision to **all** positions and ask whether it hurts.
   presence-not-strength would mean any per-layer noise-target pressure
   suffices to block the task; dose-dependence would locate a usable
   low-λ regime.
+- Learnability check (added after the λ sweep; Brendan): before
+  interpreting full-sequence *grokking dynamics*, establish that the
+  full-sequence objective can be trained to task competence at all —
+  the matched-budget failures could be budget or difficulty artifacts.
+  (a) k_max = 6 at 3× budget (120 epochs ≈ 63k steps), base and aux
+  arms; (b) easier task at k_max = 4 and k_max = 3 (full enumerated
+  split, 20k steps) — small enough to be easier, large enough that the
+  task is not plausibly one attention-then-lookup layer (k = 3 is
+  borderline: a 4-token product has only 1296 combinations). Grokking
+  claims get conditioned on whichever of these succeeds.
 - Analysis, per (position, layer), on held-out chains (Brendan's
   three-readout spec):
   1. **Own-output progression**: lens top-1 vs that position's actual
