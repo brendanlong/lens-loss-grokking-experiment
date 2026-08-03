@@ -1481,6 +1481,33 @@ dusvswcb / and the k3-aux run):
 3. k_max=3 leaves only 1,554 total chains, too few for the data-rich
    framing; k_max=4 is the right "easier task" control.
 
+### 2026-08-03 — Phase 9 long-horizon aux check: the marginal-solution basin is escapable at k_max=4 — ~10× delayed, with a permanent short-chain deficit
+
+Does the full-seq aux arm *eventually* learn (pre-registered
+long-horizon check)? k_max=4, λ = 0.3 all-positions on the full-seq
+base, 200k steps (SkyPilot job 194, wandb 4ricj7xh):
+
+| metric | value |
+|---|---|
+| memorize | 30.5k (vs base 6.3k at k_max=4 — ~5× later) |
+| k4 first crossing | 52k, then 0 dips, occupancy 1.00, final 0.992 |
+| k3 | never crosses; plateaus ~0.78 |
+| k2 | never crosses; plateaus ~0.61 |
+| final test mean | 0.950 |
+
+The layer-0-satisfiable marginal solution is **not a terminal basin at
+k_max=4**: the run is flat at chance until ~30k, then transitions —
+flat-then-sudden, grokking-shaped — and the hardest stratum converges
+and holds perfectly. But the short strata plateau *below what the base
+objective reached at one-tenth the budget* (base at 20k: k3 0.985,
+k2 0.837), so the difficulty ordering inverts: under full-sequence deep
+supervision the easy strata are the casualties, consistent with the
+answer-dilution account (short chains contribute the fewest informative
+targets, so their answer gradient is weakest against the per-layer
+noise-target pressure). Whether the k_max=6 aux arm is likewise
+escapable on some longer horizon (it is flat through 63k) remains open.
+(Single seed.)
+
 **P2 confirmed, strengthened.** The pre-registered prediction was that
 full-sequence deep supervision would make intermediates lens-invisible
 while probes still find them; what the data show is that the

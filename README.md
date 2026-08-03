@@ -5,7 +5,7 @@ predict the answer through the model's own unembedding — the logit lens
 turned into a training objective (the LayerSkip/CALM loss, borrowed from
 the inference-efficiency literature)?
 
-We expected it to break grokking. Instead we found, across ~192 runs on
+We expected it to break grokking. Instead we found, across ~193 runs on
 modular arithmetic and a multi-hop composition task:
 
 1. **Grokking in LayerNorm transformers never actually sticks.** Run
@@ -64,7 +64,7 @@ experimental log — per-seed tables, exact commands, and the correction
 lineage — is in [RESULTS.md](RESULTS.md), with the pre-registered
 predictions in [EXPERIMENT_PLAN.md](EXPERIMENT_PLAN.md). Training curves
 for every run: [public wandb project](https://wandb.ai/brendanlong-com/grok-lens).
-Final checkpoints for all 180 runs:
+Final checkpoints for all 181 runs:
 [HF dataset](https://huggingface.co/datasets/brendanlong/lens-loss-grokking-experiment).
 
 ## Repo layout
