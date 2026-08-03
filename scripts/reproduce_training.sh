@@ -85,3 +85,15 @@ for s in 42 43 44; do train "p113-L2-lam0.3-uniform-frac0.3-s${s}" --aux-lambda 
 #   run="S3-grok-sub10000-wd0.3-lensaux0.3-uniform-s${s}-100k"
 #   uv run python -m lego.train --train-subset 10000 --weight-decay 0.3 --lr-schedule constant --total-steps 100000 --eval-every-steps 500 --lens-aux --lens-aux-weight 0.3 --seed $s --wandb-run-name "$run" --checkpoint-dir "data/lego/checkpoints/$run"
 # done
+
+# --- Full-sequence (realistic) objective: data-rich pair + attribution arm,
+# --- and the grokking-regime pair (delay-and-destabilize) ---
+# uv run python -m lego.train --base-loss all-positions --seed 42 --wandb-run-name "S3-std-8L-splitku-fullseqbase-s42" --checkpoint-dir "data/lego/checkpoints/S3-std-8L-splitku-fullseqbase-s42"
+# uv run python -m lego.train --base-loss all-positions --lens-aux --lens-aux-weight 0.3 --lens-aux-mode all-positions --seed 42 --wandb-run-name "S3-std-8L-splitku-fullseq-lensaux0.3-allpos-s42" --checkpoint-dir "data/lego/checkpoints/S3-std-8L-splitku-fullseq-lensaux0.3-allpos-s42"
+# uv run python -m lego.train --base-loss all-positions --lens-aux --lens-aux-weight 0.3 --seed 42 --wandb-run-name "S3-std-8L-splitku-fullseqbase-lensaux0.3-answer-s42" --checkpoint-dir "data/lego/checkpoints/S3-std-8L-splitku-fullseqbase-lensaux0.3-answer-s42"
+# for s in 42 43 44; do
+#   run="S3-grok-sub10000-wd0.3-fullseqbase-s${s}-100k"
+#   uv run python -m lego.train --base-loss all-positions --train-subset 10000 --weight-decay 0.3 --lr-schedule constant --total-steps 100000 --eval-every-steps 500 --seed $s --wandb-run-name "$run" --checkpoint-dir "data/lego/checkpoints/$run"
+#   run="S3-grok-sub10000-wd0.3-fullseq-lensaux0.3-allpos-s${s}-100k"
+#   uv run python -m lego.train --base-loss all-positions --lens-aux --lens-aux-weight 0.3 --lens-aux-mode all-positions --train-subset 10000 --weight-decay 0.3 --lr-schedule constant --total-steps 100000 --eval-every-steps 500 --seed $s --wandb-run-name "$run" --checkpoint-dir "data/lego/checkpoints/$run"
+# done

@@ -459,23 +459,30 @@ def fig_probes(outdir: Path, probes_json: Path) -> None:
     plt.close(fig)
 
 
-def fig_lego_grok(api: wandb.Api, outdir: Path) -> None:
+def fig_lego_grok(
+    api: wandb.Api,
+    outdir: Path,
+    runs: list[tuple[str, str]] | None = None,
+    filename: str = "lego_grok.png",
+    suptitle: str = (
+        "LEGO grokking regime: the baseline grokks per-k in stages and wobbles;\n"
+        "the aux loss compresses the staircase and holds it"
+    ),
+) -> None:
     """LEGO grokking regime (10k-chain subset, wd 0.3): per-k held-out
-    accuracy over training, baseline vs aux, one representative seed."""
+    accuracy over training, two arms side by side, one representative seed."""
     ks = [2, 3, 4, 5, 6]
     cmap = plt.get_cmap("viridis")
-    fig, axes = plt.subplots(1, 2, figsize=(7.6, 3.0), dpi=160, sharey=True)
-    for ax, (name, title) in zip(
-        axes,
-        [
+    if runs is None:
+        runs = [
             ("S3-grok-sub10000-wd0.3-base-s44-100k", "baseline (seed 44)"),
             (
                 "S3-grok-sub10000-wd0.3-lensaux0.3-uniform-s44-100k",
                 "aux λ=0.3 (seed 44)",
             ),
-        ],
-        strict=True,
-    ):
+        ]
+    fig, axes = plt.subplots(1, 2, figsize=(7.6, 3.0), dpi=160, sharey=True)
+    for ax, (name, title) in zip(axes, runs, strict=True):
         run = next(r for r in api.runs("brendanlong-com/grok-lens") if r.name == name)
         hist = sorted(
             (h for h in run.scan_history() if h.get("test_acc/k_2") is not None),
@@ -496,15 +503,9 @@ def fig_lego_grok(api: wandb.Api, outdir: Path) -> None:
         style(ax)
     axes[0].set_ylabel("held-out accuracy", fontsize=9)
     axes[1].legend(frameon=False, fontsize=8, loc="lower right", ncols=2)
-    fig.suptitle(
-        "LEGO grokking regime: the baseline grokks per-k in stages and wobbles;\n"
-        "the aux loss compresses the staircase and holds it",
-        fontsize=9.5,
-        x=0.02,
-        ha="left",
-    )
+    fig.suptitle(suptitle, fontsize=9.5, x=0.02, ha="left")
     fig.tight_layout(rect=(0, 0, 1, 0.90))
-    fig.savefig(outdir / "lego_grok.png", bbox_inches="tight")
+    fig.savefig(outdir / filename, bbox_inches="tight")
     plt.close(fig)
 
 
@@ -532,6 +533,26 @@ def main() -> None:
     print("formation.png done")
     fig_lego_grok(api, outdir)
     print("lego_grok.png done")
+    fig_lego_grok(
+        api,
+        outdir,
+        runs=[
+            (
+                "S3-grok-sub10000-wd0.3-fullseqbase-s44-100k",
+                "full-sequence base (seed 44)",
+            ),
+            (
+                "S3-grok-sub10000-wd0.3-fullseq-lensaux0.3-allpos-s44-100k",
+                "full-sequence base + aux λ=0.3 (seed 44)",
+            ),
+        ],
+        filename="lego_grok_fullseq.png",
+        suptitle=(
+            "The same grokking cell under the realistic full-sequence objective:\n"
+            "chronic collapse without aux; delayed, partial grokking with it"
+        ),
+    )
+    print("lego_grok_fullseq.png done")
     if args.probes_json.exists():
         fig_probes(outdir, args.probes_json)
         print("probes.png done")

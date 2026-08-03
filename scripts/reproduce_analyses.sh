@@ -24,6 +24,9 @@ uv run python -m lego.compare_lens_aux
 echo "=== LEGO direction probes at the supervised position ==="
 uv run python -m lego.analyze_probes --json-out data/analysis/probes.json
 
+echo "=== LEGO full-sequence arms: position-by-position lens/probe grid ==="
+uv run python -m lego.analyze_fullseq --json-out data/analysis/fullseq.json
+
 echo "=== Stability metrics (occupancy, dips; needs wandb login) ==="
 uv run python -m grok_lens.analyze_stability || echo "skipped (wandb login required)"
 

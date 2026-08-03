@@ -1393,3 +1393,54 @@ Final test mean: base 0.38/0.88/0.37; aux 0.45/0.18/0.74.
    most of which are irreducible noise on this task — is harmful at the
    base level and disastrous as per-layer supervision, consistent with
    the shuffled-target specificity control on the arithmetic tasks.
+
+### 2026-08-02 — Phase 9 attribution arm: on the realistic base, even answer-shaped aux is harmful
+
+One-seed control (data-rich, canonical budget, SkyPilot job 183, wandb
+yjtu14kn): full-sequence base loss + the *answer-mode* aux
+(`--base-loss all-positions --lens-aux --lens-aux-weight 0.3`, uniform).
+Result: chance on every stratum (final test mean 0.173; k2–k6
+0.10–0.23). So the harm is not only "noise targets at every layer": on
+the full-sequence base objective, even the aux form that was benign and
+beneficial on the answer-only base destroys learning at matched budget.
+The benignness of answer-shaped deep supervision is contingent on the
+base objective, not just on the aux targets. (Single seed, one regime —
+scoped accordingly.)
+
+### 2026-08-02 — Phase 9 lens/probe verdict (P2): full-sequence supervision hides the intermediates from the lens everywhere; probes still see them
+
+Recorded position-by-position analysis (`lego.analyze_fullseq`; SkyPilot
+jobs 182 and 185; JSONs in the run results). Held-out chains; "lens max /
+probe max anywhere" = best cell over all (layer, position); chance 0.17.
+
+Data-rich four-way, k=4 intermediates (traj[1]/traj[2]/traj[3]):
+
+| arm | lens max anywhere | probe max anywhere |
+|---|---|---|
+| answer-only base | 0.97 / 1.00 / 1.00 (op staircase) | 1.00 / 1.00 / 1.00 |
+| answer-only aux | ≤ 0.34 below ℓ\* (Phase 7) | 0.95 at best cells (Phase 7) |
+| full-seq base | 0.26 / 0.18 / 0.18 | 1.00 / 1.00 / 0.29 |
+| full-seq base + full-seq aux | 0.30 / 0.18 / 0.20 | 1.00 / 0.41 / 0.18 |
+
+Grokking-regime spot checks on the arms that learn (fullseq base s43,
+which solves k2–k6; fullseq aux s44, which solves k2–k5): identical
+pattern — lens ≤ 0.30 on every intermediate at every position and layer,
+probes recover traj[1] at 1.00 and traj[2] at 0.69–0.80.
+
+**P2 confirmed, strengthened.** The pre-registered prediction was that
+full-sequence deep supervision would make intermediates lens-invisible
+while probes still find them; what the data show is that the
+*full-sequence objective itself* already does this — the answer-only
+baseline's op-position staircase (lens up to 1.00 on intermediates) is
+erased the moment those positions acquire next-token targets, in the
+base arm as much as the aux arm, including in models that demonstrably
+compute the intermediates (they solve those strata). The lens's
+own-output readout behaves exactly as predicted throughout: structural
+next tokens read at 1.00 from layer 0 under the aux loss, unpredictable
+positions sit at calibrated near-uniform, and the `<predict>`
+distribution sharpens to the answer where the answer is learned.
+Layer-0-legible structural tokens vs layer-7 answers also means the
+progression depth tracks target difficulty. The general statement that
+survives all four arms: **the logit lens shows exactly what the
+training objective put into the unembedding basis — and nothing else;
+linear probes see whatever the model actually computes.**

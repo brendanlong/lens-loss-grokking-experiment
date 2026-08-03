@@ -5,7 +5,7 @@ predict the answer through the model's own unembedding — the logit lens
 turned into a training objective (the LayerSkip/CALM loss, borrowed from
 the inference-efficiency literature)?
 
-We expected it to break grokking. Instead we found, across ~175 runs on
+We expected it to break grokking. Instead we found, across ~185 runs on
 modular arithmetic and a multi-hop composition task:
 
 1. **Grokking in LayerNorm transformers never actually sticks.** Run
@@ -46,6 +46,16 @@ modular arithmetic and a multi-hop composition task:
    the complementary finding: intermediate states live in lens-invisible
    directions of the supervised residual in both arms; what the
    supervision aligns with the lens is exactly the answer.
+6. **All of that is for answer-shaped supervision; the realistic form
+   inverts it.** Train the way a real LM is trained — next-token loss
+   at every position, deep supervision included — and on this task the
+   base objective alone halves held-out accuracy, the aux loss delays
+   or breaks grokking and stabilizes nothing, and in the data-rich
+   regime the model sits at chance while every layer's lens is
+   perfectly legible. The position-by-position lens/probe grid gives
+   the unifying statement: **the logit lens shows what the objective
+   put into the unembedding basis — nothing more; probes show what the
+   model actually computes.**
 
 ![Test accuracy over 50k steps: baseline runs collapse below 90% dozens of times; aux runs arrive later and hold](figures/occupancy.png)
 
@@ -54,7 +64,7 @@ experimental log — per-seed tables, exact commands, and the correction
 lineage — is in [RESULTS.md](RESULTS.md), with the pre-registered
 predictions in [EXPERIMENT_PLAN.md](EXPERIMENT_PLAN.md). Training curves
 for every run: [public wandb project](https://wandb.ai/brendanlong-com/grok-lens).
-Final checkpoints for all 163 runs:
+Final checkpoints for all 172 runs:
 [HF dataset](https://huggingface.co/datasets/brendanlong/lens-loss-grokking-experiment).
 
 ## Repo layout
@@ -70,6 +80,7 @@ lego/               # S3 multi-hop composition task (front-loading + grokking-re
   compare_lens_aux.py  # lens staircase / coalescence analysis
   analyze_probes.py    # linear probes at the supervised position (dark-space direction test)
   analyze_grok_stability.py  # per-k first-crossing / dips / occupancy from wandb
+  analyze_fullseq.py   # position-by-position lens/probe grid (full-sequence arms)
 common/             # shared config / schedule / checkpoint utilities
 scripts/            # reproduction entry points (see below)
 figures/            # pre-generated figures used in the writeup
@@ -81,7 +92,7 @@ Requires Python ≥ 3.12 and [uv](https://docs.astral.sh/uv/):
 
 ```bash
 uv sync
-uv run pytest   # 92 CPU tests, ~5 s
+uv run pytest   # 95 CPU tests, ~5 s
 ```
 
 A GPU is optional for the analyses (checkpoints are downloaded) and
