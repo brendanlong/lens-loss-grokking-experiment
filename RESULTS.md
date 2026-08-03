@@ -1379,9 +1379,10 @@ Final test mean: base 0.38/0.88/0.37; aux 0.45/0.18/0.74.
    100k, and the sawtooth is far more violent (69–154 dips at the worst
    stratum vs ≤ 15 total for answer-only baselines).
 2. **Full-sequence deep supervision on top is destructive, 3/3 seeds**:
-   memorization is delayed 1.3–3.4×, every measurable first crossing is
-   delayed ~1.4–2.8× (or never happens — one seed crosses nothing in
-   100k), k6 never crosses in any seed, and there is no stabilization
+   memorization is delayed 1.1–3.4×, most measurable first crossings are
+   delayed ~1.8–2.8× (s44 k3 is unchanged within noise, 19k vs 19.5k) or
+   never happen — one seed crosses nothing in
+   100k — k6 never crosses under the aux loss, and there is no stabilization
    anywhere (the crossed strata dip chronically; no run is remotely
    near-absorbing). The delay-and-destabilize phenotype is the mirror
    image of the answer-shaped aux in the identical cell

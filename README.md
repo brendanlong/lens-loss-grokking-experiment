@@ -5,7 +5,7 @@ predict the answer through the model's own unembedding — the logit lens
 turned into a training objective (the LayerSkip/CALM loss, borrowed from
 the inference-efficiency literature)?
 
-We expected it to break grokking. Instead we found, across ~185 runs on
+We expected it to break grokking. Instead we found, across ~184 runs on
 modular arithmetic and a multi-hop composition task:
 
 1. **Grokking in LayerNorm transformers never actually sticks.** Run
@@ -53,9 +53,9 @@ modular arithmetic and a multi-hop composition task:
    or breaks grokking and stabilizes nothing, and in the data-rich
    regime the model sits at chance while every layer's lens is
    perfectly legible. The position-by-position lens/probe grid gives
-   the unifying statement: **the logit lens shows what the objective
-   put into the unembedding basis — nothing more; probes show what the
-   model actually computes.**
+   the unifying statement (on this task): **the logit lens shows what
+   the objective put into the unembedding basis — nothing more; probes
+   show what is linearly present.**
 
 ![Test accuracy over 50k steps: baseline runs collapse below 90% dozens of times; aux runs arrive later and hold](figures/occupancy.png)
 
