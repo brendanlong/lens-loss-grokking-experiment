@@ -459,6 +459,85 @@ def fig_probes(outdir: Path, probes_json: Path) -> None:
     plt.close(fig)
 
 
+def fig_probes_fullseq(outdir: Path, grid_json: Path) -> None:
+    """Lens vs probe under full-sequence training (k = 4 chains), on the
+    grokking-regime models that solve the k = 4 stratum. Data from
+    `lego.analyze_fullseq --runs ... --json-out` on those checkpoints."""
+    results = json.loads(grid_json.read_text())
+    arms = [
+        (
+            "S3-grok-sub10000-wd0.3-fullseqbase-s43-100k",
+            "full-sequence base (seed 43)",
+            VERM,
+        ),
+        (
+            "S3-grok-sub10000-wd0.3-fullseq-lensaux0.3-allpos-s44-100k",
+            "full-sequence base + aux λ=0.3 (seed 44)",
+            BLUE,
+        ),
+    ]
+    k = 4
+    fig, axes = plt.subplots(2, 2, figsize=(7.2, 4.4), dpi=160, sharex=True)
+    for col, (run, title, color) in enumerate(arms):
+        r = results[run][f"k{k}"]
+        probe = r["probe_traj_acc"]  # (P, L, k+1)
+        lens = r["lens_traj_acc"]  # (L, P, k+1)
+        next_acc = r["lens_next_token_acc"]  # (L, P)
+        n_layers = len(lens)
+        n_pos = len(probe)
+        layers = range(n_layers)
+        # row 0: best intermediate state (j = 1..k-1), max over positions
+        probe_best = [
+            max(probe[p][li][j] for p in range(n_pos) for j in range(1, k))
+            for li in layers
+        ]
+        lens_best = [
+            max(lens[li][p][j] for p in range(n_pos) for j in range(1, k))
+            for li in layers
+        ]
+        axes[0][col].plot(layers, probe_best, color=color, lw=1.6, label="linear probe")
+        axes[0][col].plot(
+            layers, lens_best, color=color, lw=1.6, ls="--", label="logit lens"
+        )
+        # row 1: the answer at <predict> — the lens's own trained target there
+        pr = 2 * k + 2
+        axes[1][col].plot(
+            layers,
+            [probe[pr][li][k] for li in layers],
+            color=color,
+            lw=1.6,
+        )
+        axes[1][col].plot(
+            layers,
+            [row[pr] for row in next_acc],
+            color=color,
+            lw=1.6,
+            ls="--",
+        )
+        axes[0][col].set_title(title, fontsize=9.5, loc="left")
+        axes[1][col].set_xlabel("layer", fontsize=9)
+        for row in (0, 1):
+            ax = axes[row][col]
+            ax.axhline(1 / 6, color=GRAY, lw=0.8, ls=":")
+            ax.set_ylim(-0.03, 1.06)
+            style(ax)
+    axes[0][0].set_ylabel("best intermediate\n(any position)", fontsize=9)
+    axes[1][0].set_ylabel("answer at <predict>", fontsize=9)
+    axes[0][0].legend(frameon=False, fontsize=8.5, loc="upper left")
+    axes[0][0].text(6.9, 1 / 6 + 0.03, "chance", fontsize=7.5, color=GRAY)
+    fig.suptitle(
+        "Full-sequence training, models that solve k = 4: intermediates are\n"
+        "linearly present but lens-invisible in both arms; the answer — the\n"
+        "lens's trained target — is the one thing lens and probe agree on",
+        fontsize=9.5,
+        x=0.02,
+        ha="left",
+    )
+    fig.tight_layout(rect=(0, 0, 1, 0.90))
+    fig.savefig(outdir / "probes_fullseq.png", bbox_inches="tight")
+    plt.close(fig)
+
+
 def fig_lego_grok(
     api: wandb.Api,
     outdir: Path,
@@ -517,6 +596,15 @@ def main() -> None:
         default=Path("data/analysis/probes.json"),
         help="Output of lego.analyze_probes --json-out (probes.png input)",
     )
+    parser.add_argument(
+        "--fullseq-grid-json",
+        type=Path,
+        default=Path("data/analysis/fullseq-grok.json"),
+        help=(
+            "Output of lego.analyze_fullseq on the grokking-regime "
+            "full-sequence checkpoints (probes_fullseq.png input)"
+        ),
+    )
     args = parser.parse_args()
     outdir = Path(__file__).resolve().parents[1] / "figures"
     outdir.mkdir(exist_ok=True)
@@ -560,6 +648,15 @@ def main() -> None:
         print(
             f"probes.png skipped: {args.probes_json} not found "
             "(run lego.analyze_probes --json-out first)"
+        )
+    if args.fullseq_grid_json.exists():
+        fig_probes_fullseq(outdir, args.fullseq_grid_json)
+        print("probes_fullseq.png done")
+    else:
+        print(
+            f"probes_fullseq.png skipped: {args.fullseq_grid_json} not found "
+            "(run the lego.analyze_fullseq --runs command in "
+            "scripts/reproduce_analyses.sh first)"
         )
 
 

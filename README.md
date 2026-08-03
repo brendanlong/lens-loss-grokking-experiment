@@ -31,31 +31,23 @@ modular arithmetic and a multi-hop composition task:
    sparse circuit supplies the fragility. Removing either suffices.
 4. Controls: the effect is specific to *answer-shaped* supervision (a
    weight-decay sweep and a shuffled-target control both fail to
-   reproduce it), the story replicates on modular subtraction, and on
-   a multi-hop composition task the aux loss front-loads the
-   computation across layers (at a cost on the shortest chains in the
-   data-rich regime).
-5. **When depth is required, the delay reverses.** Put the multi-hop
-   task in a grokking regime (small memorizable train subset, high
-   weight decay) and it grokks *per hop-count in stages*, with the
-   baseline sawtooth reappearing on schedule — and the aux loss, which
-   cannot collapse this computation into one block, **accelerates the
-   full staircase ~6× at the median seed while still making it
-   stick** (baseline stage-timing is heavy-tailed across seeds; aux
-   timing is tight). Linear probes add
-   the complementary finding: intermediate states live in lens-invisible
-   directions of the supervised residual in both arms; what the
-   supervision aligns with the lens is exactly the answer.
-6. **All of that is for answer-shaped supervision; the realistic form
-   inverts it.** Train the way a real LM is trained — next-token loss
-   at every position, deep supervision included — and on this task the
-   base objective alone halves held-out accuracy, the aux loss delays
-   or breaks grokking and stabilizes nothing, and in the data-rich
-   regime the model sits at chance while every layer's lens is
-   perfectly legible. The position-by-position lens/probe grid gives
-   the unifying statement (on this task): **the logit lens shows what
-   the objective put into the unembedding basis — nothing more; probes
-   show what is linearly present.**
+   reproduce it), and the story replicates on modular subtraction.
+5. **Extending to a model that needs intermediates — trained like a
+   real LM — deep supervision turns hostile.** On k-hop group
+   composition trained with next-token loss at every position (where
+   most targets are irreducible noise), the task grokks *per hop-count
+   in stages* with a violent baseline sawtooth, and per-layer deep
+   supervision delays or outright prevents the transition (presence,
+   not strength: λ = 0.01 is as fatal as λ = 0.3) while making every
+   layer's lens perfectly legible — at chance. Legibility without
+   competence.
+6. **The lens shows the loss; probes show the computation.** In models
+   that demonstrably solve multi-hop strata, the intermediate states
+   are linearly recoverable from the residual stream (~1.0) yet
+   invisible to the logit lens at every layer and position (≤ 0.30,
+   with or without deep supervision). **The logit lens reads out the
+   trained targets — nothing more; probes see what is actually
+   there.**
 
 ![Test accuracy over 50k steps: baseline runs collapse below 90% dozens of times; aux runs arrive later and hold](figures/occupancy.png)
 
@@ -75,12 +67,12 @@ grok_lens/          # modular-arithmetic grokking: model, aux loss, training, an
   analyze_*.py      #   stability / FFT / knockout / layer-0 analyses
   make_figures.py   #   regenerates figures/ from wandb + checkpoints
   muon.py           #   Muon/AdamW parameter routing (optimizer-robustness arm)
-lego/               # S3 multi-hop composition task (front-loading + grokking-regime results)
+lego/               # S3 multi-hop composition task (full-sequence / realistic-objective study)
   train.py          #   uv run python -m lego.train --help
-  compare_lens_aux.py  # lens staircase / coalescence analysis
-  analyze_probes.py    # linear probes at the supervised position (dark-space direction test)
+  analyze_fullseq.py   # position-by-position lens/probe grid (the headline analysis)
   analyze_grok_stability.py  # per-k first-crossing / dips / occupancy from wandb
-  analyze_fullseq.py   # position-by-position lens/probe grid (full-sequence arms)
+  compare_lens_aux.py  # lens staircase / coalescence (answer-only arms; RESULTS log)
+  analyze_probes.py    # <predict>-position probes (answer-only arms; RESULTS log)
 common/             # shared config / schedule / checkpoint utilities
 scripts/            # reproduction entry points (see below)
 figures/            # pre-generated figures used in the writeup

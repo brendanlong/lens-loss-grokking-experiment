@@ -119,6 +119,18 @@ Informative regardless of outcome:
   the aux loss only reshapes *where* the answer appears, not *when* the
   circuit forms.
 
+> **Retrospective note (2026-08-03).** Phases 5–8 test *answer-position*
+> supervision on LEGO: the aux loss (and the base loss) grade only the
+> `<predict>` position. That design was a misreading of the intended
+> experiment — the question this study meant to ask is what per-layer
+> deep supervision does in the *realistic* setting where every position
+> is trained next-token, as an actual LM is (and where, on this task,
+> most per-position targets are irreducible noise). Phase 9 is that
+> experiment. The Phase 5–8 results are retained below and in RESULTS.md
+> as a complete record (answer-position supervision turns out to be the
+> aligned, benign form — a finding, but not the intended one), and the
+> public writeup presents the LEGO study in its full-sequence form only.
+
 ## Phase 5 (extension): lens aux loss on LEGO multi-hop composition
 
 Added 2026-07-19, after Phases 1–4 concluded (see RESULTS.md). Modular
