@@ -1428,6 +1428,25 @@ which solves k2–k6; fullseq aux s44, which solves k2–k5): identical
 pattern — lens ≤ 0.30 on every intermediate at every position and layer,
 probes recover traj[1] at 1.00 and traj[2] at 0.69–0.80.
 
+### 2026-08-02 — Phase 9 dose-response: the full-sequence harm is presence, not strength
+
+Data-rich, seed 42, λ ∈ {0.01, 0.1} full-sequence aux on the
+full-sequence base (SkyPilot jobs 186–187; wandb 10u7e220 / qzbki6a2;
+commands as the λ = 0.3 run with `--lens-aux-weight` swapped):
+
+| λ | held-out mean at 20,960 steps |
+|---|---|
+| 0.01 | 0.164 (chance) |
+| 0.1 | 0.165 (chance) |
+| 0.3 | 0.162 (chance) |
+
+A 1%-weight full-sequence deep-supervision term blocks the task as
+completely as a 30% one — the exact mirror of the arithmetic-task
+finding that the answer-shaped *benefits* are flat from λ = 0.01 to
+3.0. In both directions, what matters is whether per-layer supervision
+is present and what it points at, not how hard it pushes. (Single seed
+per λ, one regime.)
+
 **P2 confirmed, strengthened.** The pre-registered prediction was that
 full-sequence deep supervision would make intermediates lens-invisible
 while probes still find them; what the data show is that the
