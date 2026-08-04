@@ -1382,7 +1382,7 @@ Final test mean: base 0.38/0.88/0.37; aux 0.45/0.18/0.74.
    past the budget — with heterogeneous outcomes where it lands**:
    memorization is delayed 1.1–3.4× in every seed, most measurable
    first crossings are delayed ~1.8–2.8× (s44 k3 is unchanged within
-   noise), one seed never transitions at all (chance through 100k), and
+   noise), one seed never crosses any stratum in 100k (k ≤ 4 stall at 0.58–0.81; k ≥ 5 at chance), and
    k6 never crosses under the aux loss. But "destructive" would
    overstate it: in the two seeds that do transition, the aux run ends
    with *higher* final accuracy on every stratum than its base

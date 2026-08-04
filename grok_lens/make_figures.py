@@ -5,17 +5,19 @@ formation-phase statistics (the part-2 seed question: does the aux loss
 grow many weak components in parallel where the baseline crystallizes a
 few winners?).
 
-Figures:
-  1. occupancy.png    — test-acc trajectories: baseline sawtooth vs aux
-                        absorbing (the hero image)
-  2. knockout.png     — accuracy after frequency knockouts, baseline vs aux
-  3. churn.png        — per-frequency power churn vs output accuracy
-  4. coalescence.png  — LEGO answer-coalescence layer vs hop count
-  5. formation.png    — circuit concentration during formation
-  6. probes.png       — LEGO probe-vs-lens at the supervised position
-                        (needs the JSON from
-                        `lego.analyze_probes --json-out data/analysis/probes.json`)
-  7. lego_grok.png    — LEGO grokking regime: per-k staircase, baseline vs aux
+Writeup figures:
+  1. occupancy.png         — test-acc trajectories: baseline sawtooth vs aux
+                             absorbing (the hero image)
+  2. knockout.png          — accuracy after frequency knockouts
+  3. churn.png             — per-frequency power churn vs output accuracy
+  4. formation.png         — circuit concentration during formation
+  5. lego_grok_fullseq.png — full-sequence grokking regime, all 6 runs
+  6. probes_fullseq.png    — lens vs probe under full-sequence training
+                             (needs data/analysis/fullseq-grok.json; see
+                             scripts/reproduce_analyses.sh)
+
+Legacy answer-only LEGO figures (RESULTS.md record; --legacy-answer-only):
+  coalescence.png, probes.png, lego_grok.png
 
 Usage:
     uv run python -m grok_lens.make_figures
@@ -459,6 +461,62 @@ def fig_probes(outdir: Path, probes_json: Path) -> None:
     plt.close(fig)
 
 
+def fig_lego_grok_fullseq_grid(api: wandb.Api, outdir: Path) -> None:
+    """All six full-sequence grokking runs (2 arms x 3 seeds): per-k
+    held-out accuracy over training. Single-seed views of this regime
+    mislead — seed variance dominates the arm contrast."""
+    ks = [2, 3, 4, 5, 6]
+    cmap = plt.get_cmap("viridis")
+    fig, axes = plt.subplots(
+        2, 3, figsize=(9.6, 4.4), dpi=160, sharey=True, sharex=True
+    )
+    for row, pattern in enumerate(
+        [
+            "S3-grok-sub10000-wd0.3-fullseqbase-s{s}-100k",
+            "S3-grok-sub10000-wd0.3-fullseq-lensaux0.3-allpos-s{s}-100k",
+        ]
+    ):
+        for col, seed in enumerate(SEEDS):
+            ax = axes[row][col]
+            name = pattern.format(s=seed)
+            run = next(
+                r for r in api.runs("brendanlong-com/grok-lens") if r.name == name
+            )
+            hist = sorted(
+                (h for h in run.scan_history() if h.get("test_acc/k_2") is not None),
+                key=lambda h: h["_step"],
+            )
+            steps = [h["_step"] for h in hist]
+            for i, k in enumerate(ks):
+                ax.plot(
+                    steps,
+                    [h[f"test_acc/k_{k}"] for h in hist],
+                    color=cmap(0.1 + 0.8 * i / (len(ks) - 1)),
+                    lw=0.9,
+                    label=f"k={k}" if (row, col) == (0, 0) else None,
+                )
+            ax.set_ylim(-0.03, 1.06)
+            style(ax)
+            if row == 0:
+                ax.set_title(f"seed {seed}", fontsize=9.5, loc="left")
+            if row == 1:
+                ax.set_xlabel("training step", fontsize=9)
+    axes[0][0].set_ylabel("base objective\nheld-out accuracy", fontsize=9)
+    axes[1][0].set_ylabel("+ deep supervision\nheld-out accuracy", fontsize=9)
+    axes[0][0].legend(frameon=False, fontsize=7.5, loc="lower right", ncols=2)
+    fig.suptitle(
+        "Full-sequence grokking regime, all runs: the base transitions everywhere "
+        "but rarely settles;\ndeep supervision delays (s42), stalls partway (s43), or "
+        "matches-and-improves (s44) the transition",
+        fontsize=9.5,
+        x=0.02,
+        ha="left",
+    )
+    fig.tight_layout(rect=(0, 0, 1, 0.90))
+    fig.savefig(outdir / "lego_grok_fullseq.png", bbox_inches="tight")
+    plt.close(fig)
+
+
 def fig_probes_fullseq(outdir: Path, grid_json: Path) -> None:
     """Lens vs probe under full-sequence training (k = 4 chains), on the
     grokking-regime models that solve the k = 4 stratum. Data from
@@ -605,6 +663,15 @@ def main() -> None:
             "full-sequence checkpoints (probes_fullseq.png input)"
         ),
     )
+    parser.add_argument(
+        "--legacy-answer-only",
+        action="store_true",
+        help=(
+            "Also regenerate the answer-only LEGO figures (coalescence.png, "
+            "probes.png, lego_grok.png) documented in RESULTS.md; these are "
+            "not part of the writeup."
+        ),
+    )
     args = parser.parse_args()
     outdir = Path(__file__).resolve().parents[1] / "figures"
     outdir.mkdir(exist_ok=True)
@@ -615,40 +682,23 @@ def main() -> None:
     print("knockout.png done")
     fig_churn(api, outdir)
     print("churn.png done")
-    fig_coalescence(outdir)
-    print("coalescence.png done")
     fig_formation(api, outdir)
     print("formation.png done")
-    fig_lego_grok(api, outdir)
-    print("lego_grok.png done")
-    fig_lego_grok(
-        api,
-        outdir,
-        runs=[
-            (
-                "S3-grok-sub10000-wd0.3-fullseqbase-s44-100k",
-                "full-sequence base (seed 44)",
-            ),
-            (
-                "S3-grok-sub10000-wd0.3-fullseq-lensaux0.3-allpos-s44-100k",
-                "full-sequence base + aux λ=0.3 (seed 44)",
-            ),
-        ],
-        filename="lego_grok_fullseq.png",
-        suptitle=(
-            "The same grokking cell under the realistic full-sequence objective:\n"
-            "chronic collapse without aux; delayed, partial grokking with it"
-        ),
-    )
+    fig_lego_grok_fullseq_grid(api, outdir)
     print("lego_grok_fullseq.png done")
-    if args.probes_json.exists():
-        fig_probes(outdir, args.probes_json)
-        print("probes.png done")
-    else:
-        print(
-            f"probes.png skipped: {args.probes_json} not found "
-            "(run lego.analyze_probes --json-out first)"
-        )
+    if args.legacy_answer_only:
+        fig_coalescence(outdir)
+        print("coalescence.png done")
+        fig_lego_grok(api, outdir)
+        print("lego_grok.png done")
+        if args.probes_json.exists():
+            fig_probes(outdir, args.probes_json)
+            print("probes.png done")
+        else:
+            print(
+                f"probes.png skipped: {args.probes_json} not found "
+                "(run lego.analyze_probes --json-out first)"
+            )
     if args.fullseq_grid_json.exists():
         fig_probes_fullseq(outdir, args.fullseq_grid_json)
         print("probes_fullseq.png done")
