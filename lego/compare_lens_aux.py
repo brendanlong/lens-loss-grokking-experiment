@@ -105,14 +105,15 @@ def coalescence_layer(
 
 
 def run_seed(run_name: str) -> int:
-    """Parse the training seed from a run name (`...-s43` -> 43).
+    """Parse the training seed from a run name (`...-s43` or
+    `...-s43-100k` -> 43).
 
     lego.train seeds the train/test split with --seed, so each run has its
     OWN split; probing every run against one fixed split would put other
     seeds' training chains in the probe set (this bug shipped once — the
     seed-42 probe set covered ~80% of the s43/s44 runs' train chains).
     """
-    match = re.search(r"-s(\d+)$", run_name)
+    match = re.search(r"-s(\d+)(?:-|$)", run_name)
     if match is None:
         msg = f"run name has no -s<seed> suffix: {run_name}"
         raise ValueError(msg)

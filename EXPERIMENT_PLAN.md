@@ -119,6 +119,18 @@ Informative regardless of outcome:
   the aux loss only reshapes *where* the answer appears, not *when* the
   circuit forms.
 
+> **Retrospective note (2026-08-03).** Phases 5–8 test *answer-position*
+> supervision on LEGO: the aux loss (and the base loss) grade only the
+> `<predict>` position. That design was a misreading of the intended
+> experiment — the question this study meant to ask is what per-layer
+> deep supervision does in the *realistic* setting where every position
+> is trained next-token, as an actual LM is (and where, on this task,
+> most per-position targets are irreducible noise). Phase 9 is that
+> experiment. The Phase 5–8 results are retained below and in RESULTS.md
+> as a complete record (answer-position supervision turns out to be the
+> aligned, benign form — a finding, but not the intended one), and the
+> public writeup presents the LEGO study in its full-sequence form only.
+
 ## Phase 5 (extension): lens aux loss on LEGO multi-hop composition
 
 Added 2026-07-19, after Phases 1–4 concluded (see RESULTS.md). Modular
@@ -206,6 +218,141 @@ steps: {L2, L3} × {λ=0, λ=0.3 uniform} × 3 seeds, named
 - P3: the aux loss still produces distributed circuits and ~100%
   occupancy under Muon (its circuit-selection effect is not
   optimizer-mediated).
+
+## Phase 7 (extension): the direction half of the dark-space prediction
+
+Added 2026-08-01, after the Phase 5 held-out re-runs. Phase 5's dark-space
+prediction named two places supervision could push necessary intermediate
+computation: **other positions** and **unread directions of the supervised
+position's residual**. The position half is answered (intermediates are
+lens-decodable at the unsupervised `<op>` positions; the `<predict>` lens
+below ℓ* reads near-uniform). The direction half is not: the aux models
+provably compute intermediates (they solve k ≥ 3), but nobody has checked
+whether those intermediates are *linearly recoverable* from the
+`<predict>`-position residual at layers where the lens is blind.
+
+**Design.** No training; the hosted `S3-std-8L-splitku-*` checkpoints.
+For each layer ℓ and trajectory index j, fit a plain linear probe (no
+bias, no norm — probe capacity controlled so the contrast is about the
+representation) for trajectory[j] on the `<predict>`-position residual at
+layer ℓ. Fit on each run's own train-split chains, evaluate on that run's
+reconstructed held-out split (split seed = training seed). Compare probe
+vs lens accuracy per layer, aux vs baseline, k ∈ {2, 4, 6}.
+
+**Pre-registered interpretation:**
+- probe ≫ lens below ℓ* ⇒ intermediates live in lens-invisible directions
+  of the supervised position (dark space confirmed in the direction sense);
+- probe ≈ lens (both near chance) ⇒ the intermediates genuinely live
+  elsewhere (the `<op>` positions) and the supervised position's residual
+  is answer-subspace-only.
+
+## Phase 8 (extension): LEGO in a grokking regime
+
+Added 2026-08-01. The stability findings are established only on
+depth-1-sufficient tasks, where per-layer answer supervision is never in
+tension with computation the model *needs*. LEGO is the task where that
+tension exists, but its arms were trained only in a promptly-generalizing
+regime (wd = 0, cosine LR, 80% of all chains — no memorization plateau,
+no transition). Does the headline phenotype (delayed first grokking, then
+near-absorbing stability; baseline sawtooth) survive when depth is
+required?
+
+**Design.**
+1. **Regime search**: subsample the enumerated train split to a
+   memorizable set (2k / 5k / 10k chains, per-k waterfill — the
+   short-chain curriculum finding still applies) × weight decay
+   (0.1 / 0.3 / 1.0), AdamW, constant LR, 50k-step budget, per-k test
+   tracking (multi-hop may grok per-k in stages, a result on its own).
+2. **If a grokking regime exists**: baseline vs aux λ = 0.3 uniform,
+   3 seeds each; per-k first-crossing, dips, occupancy.
+
+**Pre-registered predictions:**
+- The LEGO model keeps LayerNorm, so the two-ingredient account (LN+wd
+  churn × brittle circuit) predicts baseline instability *if* it grokks.
+- Open question worth stating in advance: can the aux loss still
+  stabilize when it cannot collapse the computation into one block? On
+  the arithmetic tasks its stable solution was the shallow one — that
+  exit is closed here. Aux failing to stabilize on LEGO would bound the
+  mechanism's scope; succeeding would show redundancy maintenance works
+  for genuinely deep circuits.
+
+Small-strata caveat: at small train-set sizes the k ≤ 1 strata are tiny;
+report per-k over k ≥ 2 and keep the split-seed = training-seed
+convention so analyses reconstruct each run's split.
+
+## Phase 9 (extension): full-sequence supervision — the realistic, adversarial form
+
+Added 2026-08-02, correcting a misunderstanding in the Phase 5 design.
+Phase 5 supervised the answer position only, which aligns the supervision
+with the graded quantity — a setting where deep supervision turned out to
+be benign-to-helpful. The original question (Brendan) was the opposite
+one: in a *realistic* LM setup every position is trained next-token, so
+apply the deep supervision to **all** positions and ask whether it hurts.
+
+**Pre-registered predictions (Brendan):**
+- P1: full-sequence deep supervision makes the task harder and may delay
+  or break grokking in the Phase 8 regime (in contrast to answer-only
+  aux, which accelerates it there).
+- P2: under full-sequence supervision the logit lens shows the output
+  token's progression extremely clearly — a broad distribution
+  sharpening to the right token across layers — but shows the
+  intermediate trajectory values *not at all*, even where linear probes
+  recover them. (The op-position staircase visible in answer-only
+  models' lenses should be erased: those positions' lens directions are
+  now spent on next-token targets, which are uniform-random operands.)
+
+**Design.**
+- New `--base-loss all-positions`: final-layer next-token CE at every
+  non-pad position (the answer remains readable as next-token at
+  `<predict>`; per-k answer accuracy stays the capability metric).
+- Arms, both with the full-sequence base loss: no aux vs
+  `--lens-aux --lens-aux-mode all-positions --lens-aux-weight 0.3`.
+- Grokking regime (Phase 8 cell: sub10000, wd 0.3, constant LR, 100k,
+  3 seeds each) for P1; data-rich regime (canonical 40-epoch settings,
+  seed 42 first) for P2's lens/probe analysis on models that certainly
+  learn.
+- Dose-response follow-up (added after the λ = 0.3 results): full-seq
+  aux at λ ∈ {0.01, 0.1}, data-rich, seed 42. Question: is the harm
+  presence-not-strength, like the answer-shaped benefits were on the
+  arithmetic tasks, or dose-dependent? Open prediction either way —
+  presence-not-strength would mean any per-layer noise-target pressure
+  suffices to block the task; dose-dependence would locate a usable
+  low-λ regime.
+- Learnability check (added after the λ sweep; Brendan): before
+  interpreting full-sequence *grokking dynamics*, establish that the
+  full-sequence objective can be trained to task competence at all —
+  the matched-budget failures could be budget or difficulty artifacts.
+  (a) k_max = 6 at 3× budget (120 epochs ≈ 63k steps), base and aux
+  arms; (b) easier task at k_max = 4 and k_max = 3 (full enumerated
+  split, 20k steps) — small enough to be easier, large enough that the
+  task is not plausibly one attention-then-lookup layer (k = 3 is
+  borderline: a 4-token product has only 1296 combinations). Grokking
+  claims get conditioned on whichever of these succeeds.
+- Long-horizon aux check (added after the learnability results;
+  Brendan): does the full-seq aux arm *eventually* learn, or is the
+  layer-0-satisfiable marginal solution a terminal basin? k_max = 4,
+  λ = 0.3 all-positions on the full-seq base, 200k steps (10× the
+  budget at which the base converges). Working hypothesis from the
+  data so far: the per-layer noise targets admit a trivial solution
+  (structural tokens + calibrated marginals, achievable at layer 0)
+  that the diluted answer gradient cannot escape in the data-rich
+  regime — the 63k k_max=6 aux run is flat at chance with no drift.
+  Counter-possibility worth the run: flat-then-sudden is what grokking
+  looks like.
+- Analysis, per (position, layer), on held-out chains (Brendan's
+  three-readout spec):
+  1. **Own-output progression**: lens top-1 vs that position's actual
+     next token, plus lens entropy — expect a clean distribution →
+     sharpened-token progression at every position (at positions whose
+     next token is a uniform-random operand, "clean" means calibrated
+     near-uniform over elements, the CE-optimal prediction).
+  2. **Intermediates in the lens**: lens top-1 vs trajectory[j] for
+     every intermediate j, at every position — expect maybe-visible in
+     the no-aux baseline (the answer-only models' op-position staircase
+     is the precedent), invisible under full-sequence aux.
+  3. **Intermediates via probes**: plain linear probes for
+     trajectory[j] at every position — expect recoverable in both
+     arms, and at earlier layers under the aux loss.
 
 ## References
 

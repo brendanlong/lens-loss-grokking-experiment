@@ -35,7 +35,7 @@ from torch.utils.data import DataLoader
 
 from lego.config import LegoTrainingConfig, lego_model_config
 from lego.data import ChainDataset, collate_chains, make_k_uniform_sampler
-from lego.generator import S3, enumerate_split, group_by_k
+from lego.generator import S3, enumerate_split, group_by_k, subsample_k_uniform
 from lego.model import StandardTransformer
 from lego.tokenizer import VOCAB_SIZE
 from lego.training import train_lego_model
@@ -58,6 +58,17 @@ def main() -> None:
             "(stratified per chain length k)"
         ),
     )
+    parser.add_argument(
+        "--train-subset",
+        type=int,
+        default=None,
+        help=(
+            "Train on only this many chains, subsampled from the train "
+            "split with a per-k waterfill (small strata capped at their "
+            "size). The grokking-regime memorization set; evaluation still "
+            "uses the full held-out test split. Seeded by --seed."
+        ),
+    )
 
     # Model
     parser.add_argument("--dim", type=int, default=128)
@@ -65,6 +76,16 @@ def main() -> None:
     parser.add_argument("--n-layers", type=int, default=8)
 
     # Training
+    parser.add_argument(
+        "--base-loss",
+        default="answer",
+        choices=["answer", "all-positions"],
+        help=(
+            "answer: CE at the <predict> position only (default); "
+            "all-positions: next-token CE at every non-pad position "
+            "(the realistic LM objective)."
+        ),
+    )
     parser.add_argument(
         "--lens-aux",
         action="store_true",
@@ -101,6 +122,16 @@ def main() -> None:
         help=(
             "Epochs over the train split (~269k examples at defaults; "
             "40 epochs ≈ 10.7M examples seen)"
+        ),
+    )
+    parser.add_argument(
+        "--total-steps",
+        type=int,
+        default=None,
+        help=(
+            "Train for exactly this many optimizer steps, overriding "
+            "--n-epochs (the natural budget knob when --train-subset makes "
+            "epochs tiny)."
         ),
     )
     parser.add_argument("--batch-size", type=int, default=512)
@@ -157,6 +188,9 @@ def main() -> None:
         k_min=args.k_min,
         k_max=args.k_max,
         test_frac=args.test_frac,
+        train_subset=args.train_subset,
+        total_steps=args.total_steps,
+        base_loss=args.base_loss,
         lens_aux=args.lens_aux,
         lens_aux_weight=args.lens_aux_weight,
         lens_aux_weighting=args.lens_aux_weighting,
@@ -209,6 +243,26 @@ def main() -> None:
     )
     print(f"Held-out test examples per k: {per_k_str}")
 
+    if args.train_subset is not None:
+        train_examples = subsample_k_uniform(
+            train_examples,
+            args.train_subset,
+            seed=args.seed,
+        )
+        subset_per_k = " ".join(
+            f"k{k}:{len(v)}" for k, v in sorted(group_by_k(train_examples).items())
+        )
+        print(
+            f"Train subset: {len(train_examples)} chains "
+            f"(seed={args.seed}) — {subset_per_k}"
+        )
+        if len(train_examples) < config.batch_size:
+            msg = (
+                f"--train-subset {args.train_subset} is smaller than "
+                f"--batch-size {config.batch_size}"
+            )
+            raise ValueError(msg)
+
     train_dataset = ChainDataset(train_examples, args.k_max)
     train_loader = DataLoader(
         train_dataset,
@@ -220,19 +274,25 @@ def main() -> None:
     )
 
     steps_per_epoch = len(train_examples) // config.batch_size
-    total_steps = steps_per_epoch * config.n_epochs
+    if args.total_steps is not None:
+        total_steps = args.total_steps
+        n_epochs = -(-total_steps // steps_per_epoch)  # ceil
+    else:
+        total_steps = steps_per_epoch * config.n_epochs
+        n_epochs = config.n_epochs
 
     # Model
     model = StandardTransformer(model_config)
     model = model.to(device)
 
+    print(f"Base loss: {config.base_loss}")
     if config.lens_aux:
         print(
             f"Lens aux loss: enabled (mode={config.lens_aux_mode}, "
             f"weight={config.lens_aux_weight}, "
             f"weighting={config.lens_aux_weighting})"
         )
-    print(f"Training for {config.n_epochs} epoch(s) ({total_steps} steps)")
+    print(f"Training for {n_epochs} epoch(s) ({total_steps} steps)")
     print(f"Steps per epoch: {steps_per_epoch}")
     print(
         f"Eval every {config.eval_every_steps} steps, "
@@ -249,11 +309,12 @@ def main() -> None:
         total_steps=total_steps,
         k_min=args.k_min,
         k_max=args.k_max,
-        n_epochs=config.n_epochs,
+        n_epochs=n_epochs,
         lr=config.lr,
         weight_decay=config.weight_decay,
         lr_schedule=config.lr_schedule,
         use_compile=not args.no_compile,
+        base_loss=config.base_loss,
         lens_aux=config.lens_aux,
         lens_aux_weight=config.lens_aux_weight,
         lens_aux_weighting=config.lens_aux_weighting,

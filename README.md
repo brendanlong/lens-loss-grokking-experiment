@@ -5,8 +5,8 @@ predict the answer through the model's own unembedding — the logit lens
 turned into a training objective (the LayerSkip/CALM loss, borrowed from
 the inference-efficiency literature)?
 
-We expected it to break grokking. Instead we found, across ~160 runs on
-modular arithmetic (plus a multi-hop composition task):
+We expected it to break grokking. Instead we found, across ~193 runs on
+modular arithmetic and a multi-hop composition task:
 
 1. **Grokking in LayerNorm transformers never actually sticks.** Run
    past the grok point and 2–3-layer baselines fall out of
@@ -31,9 +31,25 @@ modular arithmetic (plus a multi-hop composition task):
    sparse circuit supplies the fragility. Removing either suffices.
 4. Controls: the effect is specific to *answer-shaped* supervision (a
    weight-decay sweep and a shuffled-target control both fail to
-   reproduce it), the story replicates on modular subtraction, and on
-   a multi-hop composition task the aux loss front-loads the
-   computation across layers (at a cost on the shortest chains).
+   reproduce it), and the story replicates on modular subtraction.
+5. **The signature dynamics recur on a very different model — except
+   the stabilization.** On k-hop group composition — deep,
+   multi-position, trained like a real LM (next-token loss at every
+   position, where most targets are irreducible noise) — the task
+   grokks *per hop-count in stages* and the baseline sawtooth
+   reappears; deep supervision again delays the transition, and the
+   dose-response is again flat (λ = 0.01 acts like λ = 0.3 — now on
+   the cost side: at matched data-rich budget any λ pins the model at
+   chance while making every layer's lens perfectly legible).
+   Stabilization is what doesn't transfer: post-transition outcomes
+   are seed-heterogeneous.
+6. **The lens shows the loss; probes show the computation.** In models
+   that demonstrably solve multi-hop strata, the intermediate states
+   are linearly recoverable from the residual stream (~1.0) yet
+   invisible to the logit lens at every layer and position (≤ 0.30,
+   with or without deep supervision). **The logit lens reads out the
+   trained targets — nothing more; probes see what is actually
+   there.**
 
 ![Test accuracy over 50k steps: baseline runs collapse below 90% dozens of times; aux runs arrive later and hold](figures/occupancy.png)
 
@@ -42,7 +58,7 @@ experimental log — per-seed tables, exact commands, and the correction
 lineage — is in [RESULTS.md](RESULTS.md), with the pre-registered
 predictions in [EXPERIMENT_PLAN.md](EXPERIMENT_PLAN.md). Training curves
 for every run: [public wandb project](https://wandb.ai/brendanlong-com/grok-lens).
-Final checkpoints for all 148 runs:
+Final checkpoints for all 181 runs:
 [HF dataset](https://huggingface.co/datasets/brendanlong/lens-loss-grokking-experiment).
 
 ## Repo layout
@@ -53,9 +69,12 @@ grok_lens/          # modular-arithmetic grokking: model, aux loss, training, an
   analyze_*.py      #   stability / FFT / knockout / layer-0 analyses
   make_figures.py   #   regenerates figures/ from wandb + checkpoints
   muon.py           #   Muon/AdamW parameter routing (optimizer-robustness arm)
-lego/               # S3 multi-hop composition task (front-loading results)
+lego/               # S3 multi-hop composition task (full-sequence / realistic-objective study)
   train.py          #   uv run python -m lego.train --help
-  compare_lens_aux.py  # lens staircase / coalescence analysis
+  analyze_fullseq.py   # position-by-position lens/probe grid (the headline analysis)
+  analyze_grok_stability.py  # per-k first-crossing / dips / occupancy from wandb
+  compare_lens_aux.py  # lens staircase / coalescence (answer-only arms; RESULTS log)
+  analyze_probes.py    # <predict>-position probes (answer-only arms; RESULTS log)
 common/             # shared config / schedule / checkpoint utilities
 scripts/            # reproduction entry points (see below)
 figures/            # pre-generated figures used in the writeup
@@ -67,7 +86,7 @@ Requires Python ≥ 3.12 and [uv](https://docs.astral.sh/uv/):
 
 ```bash
 uv sync
-uv run pytest   # 84 CPU tests, ~5 s
+uv run pytest   # 95 CPU tests, ~5 s
 ```
 
 A GPU is optional for the analyses (checkpoints are downloaded) and
@@ -87,7 +106,7 @@ histories from the public wandb project, which requires a free
 `wandb login`. Checkpoint-only analyses (FFT, knockouts, layer-0 probes,
 LEGO staircase) need no accounts at all.
 
-## Reproduce the training (~a day of consumer GPU)
+## Reproduce the training (~a day and a half of consumer GPU)
 
 ```bash
 ./scripts/reproduce_training.sh   # core arms enabled; sweeps/controls commented
@@ -119,16 +138,19 @@ sky launch skypilot/reproduce.yaml --infra <your-cloud> --down -y \
   --env RUN_CMD="uv run python -m grok_lens.train --total-steps 50000 --seed 42 --no-wandb"
 ```
 
-The full core reproduction is roughly a GPU-day on an 8 GB card —
+The full core reproduction is roughly a GPU-day and a half on an 8 GB card —
 typically a few dollars on spot instances. Pass `--secret WANDB_API_KEY`
 to log to your own wandb.
 
 ## Provenance
 
-This repo is extracted from a private research monorepo where the runs
-were executed (via SkyPilot on a local GPU). wandb run IDs in RESULTS.md
-link into the public project; S3 URIs in historical commands refer to the
-original private checkpoint store — the public copies live on the
+This repo is extracted from a private research monorepo where the
+modular-arithmetic runs were executed (via SkyPilot on a local GPU); the
+multi-hop probe and grokking-regime runs were executed from this repo
+itself the same way ([`skypilot/local.yaml`](skypilot/local.yaml)).
+wandb run IDs in RESULTS.md link into the public project; S3 URIs in
+recorded commands refer to the maintainers' private checkpoint store —
+the public copies live on the
 [HF dataset](https://huggingface.co/datasets/brendanlong/lens-loss-grokking-experiment).
 
 **All of the code in this repository was written and run by Claude

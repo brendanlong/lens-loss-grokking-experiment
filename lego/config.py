@@ -66,12 +66,20 @@ class LegoTrainingConfig(BaseModel):
     k_min: int = 0
     k_max: int = 6
     test_frac: float = 0.2  # held-out fraction per chain length k
+    # Grokking regime: train on a small memorizable subset of the train
+    # split (per-k waterfill subsample; None = full split), for a fixed
+    # number of optimizer steps (None = n_epochs governs).
+    train_subset: int | None = None
+    total_steps: int | None = None
 
     # Training: answer-only cross-entropy at the <predict> position,
     # optionally with grok_lens-style deep supervision (Phase 5).
     # lens_aux_mode "answer" supervises intermediate layers at the
     # <predict> position only; "all-positions" applies next-token
     # logit-lens CE at every non-pad position.
+    # Base objective: answer-only CE (default) or the realistic
+    # full-sequence next-token CE at every non-pad position.
+    base_loss: Literal["answer", "all-positions"] = "answer"
     lens_aux: bool = False
     lens_aux_weight: float = 0.3
     lens_aux_weighting: Literal["uniform", "linear"] = "uniform"

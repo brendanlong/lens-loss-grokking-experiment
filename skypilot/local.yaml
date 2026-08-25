@@ -1,0 +1,71 @@
+# Run one training or analysis command on the persistent local-gpu
+# SkyPilot cluster (the maintainers' RTX 3060 Ti Kubernetes cluster).
+# This is the harness every recorded run in RESULTS.md goes through:
+# SkyPilot gives queueing, persistent logs, and namespaced, crash-safe
+# checkpoint sync to S3.
+#
+#   sky exec local-gpu skypilot/local.yaml -d \
+#     --env RUN_NAME=<unique-run-name> \
+#     --env RUN_CMD='uv run python -m lego.train ... --checkpoint-dir "${CHECKPOINT_DIR}"' \
+#     --secret WANDB_API_KEY --secret AWS_ACCESS_KEY_ID --secret AWS_SECRET_ACCESS_KEY
+#
+# RUN_CMD may reference ${CHECKPOINT_DIR} and ${RESULTS_DIR}; both are
+# namespaced by RUN_NAME and synced to S3 every 2 minutes and at exit.
+# (External reproducers: you don't need this file — see reproduce.yaml,
+# which runs the same commands on any cloud without the private S3 sync.)
+
+name: lens-loss
+
+resources:
+  accelerators: {RTX3060-TI: 1}
+
+workdir: .
+
+run: |
+  cd ~/sky_workdir
+  # Exit-code handling below manages errors explicitly.
+  set +e
+  if [ -z "${RUN_CMD}" ]; then
+    echo ">>> No RUN_CMD given — nothing to run"; exit 1
+  fi
+  export PATH="$HOME/.local/bin:$PATH"
+  command -v uv >/dev/null 2>&1 || pip install uv -q
+  command -v aws >/dev/null 2>&1 || pip install awscli -q
+  uv sync
+  # GPU preflight: fail fast (with a real GPU op) rather than silently
+  # crawling on CPU for hours.
+  nvidia-smi || { echo ">>> nvidia-smi failed — no usable GPU driver"; exit 1; }
+  uv run python -c "import torch; assert torch.cuda.is_available(), 'CUDA unavailable'; torch.zeros(1, device='cuda')" || exit 1
+  # Namespace outputs per run so queued jobs never overwrite each other.
+  RUN_NAME="${RUN_NAME:-${SKYPILOT_TASK_ID:-run}}"
+  export CHECKPOINT_DIR="/tmp/checkpoints/${RUN_NAME}"
+  export RESULTS_DIR="/tmp/results/${RUN_NAME}"
+  mkdir -p "${CHECKPOINT_DIR}" "${RESULTS_DIR}"
+  S3_CKPT="s3://brendanlong-experiments/lego/checkpoints/${RUN_NAME}/"
+  S3_RES="s3://brendanlong-experiments/lego/results/${RUN_NAME}/"
+  # Crash-safe sync: periodic background loop bounds loss to the interval;
+  # the final sync must not mask a training failure (or fail silently).
+  ( while true; do
+      aws s3 sync "${CHECKPOINT_DIR}" "${S3_CKPT}" >/dev/null 2>&1
+      aws s3 sync "${RESULTS_DIR}" "${S3_RES}" >/dev/null 2>&1
+      sleep 120
+    done ) &
+  SYNC_PID=$!
+  eval "${RUN_CMD}"; rc=$?
+  kill "$SYNC_PID" 2>/dev/null || true
+  if ! aws s3 sync "${CHECKPOINT_DIR}" "${S3_CKPT}"; then
+    echo "ERROR: checkpoint upload FAILED — checkpoints may be lost"
+    [ "$rc" -eq 0 ] && rc=1
+  fi
+  aws s3 sync "${RESULTS_DIR}" "${S3_RES}" || true
+  exit $rc
+
+envs:
+  RUN_CMD: ""
+  RUN_NAME: ""
+  AWS_DEFAULT_REGION: us-east-1
+
+secrets:
+  WANDB_API_KEY: ""
+  AWS_ACCESS_KEY_ID: ""
+  AWS_SECRET_ACCESS_KEY: ""

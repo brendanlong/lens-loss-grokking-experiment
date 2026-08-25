@@ -14,6 +14,11 @@
 > [public project](https://wandb.ai/brendanlong-com/grok-lens).
 > `--save-checkpoint` in historical commands performed the private S3
 > upload and has no equivalent here (checkpoints always save locally).
+> Entries dated 2026-08-01 onward were run from this repo directly, via
+> `skypilot/local.yaml` on the maintainers' local cluster — those
+> commands are copy-pasteable as recorded (the S3 sync they reference is
+> the same private store; public checkpoint copies are on the HF
+> dataset under the same run names).
 
 Does a logit-lens auxiliary loss — every layer's residual stream projected
 through the shared unembedding and scored against the target — delay,
@@ -1089,3 +1094,439 @@ uncertainty), baseline entropy 0.1–0.5 at accuracy 0.0 (confidently
 wrong). coalescence.png regenerated (per-run splits; means over
 converged seeds; non-converged marked "n/r"); WRITEUP LEGO section
 restated accordingly.
+
+### 2026-08-01 — Phase 7, direction probes at the supervised position: dark space confirmed in the direction sense; the aux loss aligns the *answer* with the lens
+
+The direction half of the Phase 5 dark-space prediction (EXPERIMENT_PLAN
+Phase 7), on the 9 hosted `S3-std-8L-splitku-*` checkpoints. Per layer ℓ
+and trajectory index j: plain linear probe (no bias, no norm) for
+trajectory[j] on the `<predict>`-position residual at ℓ, fit on each
+run's own train-split chains (≤4096 per k), evaluated on that run's own
+reconstructed held-out split (≤1024 per k; split seed = training seed).
+Zero-init full-batch Adam on the convex objective — deterministic. Run
+via SkyPilot on the local cluster (job 158, RTX 3060 Ti, ~8 min):
+
+```
+sky exec local-gpu skypilot/local.yaml -d \
+  --env RUN_NAME=S3-probes-predictpos \
+  --env RUN_CMD='uv run python -m lego.analyze_probes --json-out "${RESULTS_DIR}/probes.json"' \
+  --secret WANDB_API_KEY --secret AWS_ACCESS_KEY_ID --secret AWS_SECRET_ACCESS_KEY
+```
+
+**Intermediate states (j ∈ 1..k−1) at layers below that run's ℓ\*(k)**,
+held-out accuracy (per-seed s42/s43/s44; chance 0.17):
+
+| arm | k | probe max | lens max | probe mean | lens mean |
+|---|---|---|---|---|---|
+| baseline | 2 | 0.42/0.49/0.58 | 0.09/0.12/0.14 | 0.33/0.30/0.43 | 0.02/0.03/0.02 |
+| baseline | 4 | 0.94/0.93/0.75 | 0.17/0.18/0.18 | 0.37/0.50/0.40 | 0.04/0.05/0.04 |
+| baseline | 6 | 0.55/0.68/0.61 | 0.22/0.24/0.23 | 0.26/0.31/0.29 | 0.05/0.08/0.08 |
+| aux uniform | 2 | 0.56/0.65/0.47 | 0.16/0.42/0.30 | 0.44/0.50/0.45 | 0.13/0.22/0.17 |
+| aux uniform | 4 | 0.95/0.66/0.52 | 0.24/0.22/0.34 | 0.45/0.35/0.25 | 0.17/0.18/0.18 |
+| aux uniform | 6 | 0.72/0.74/0.72 | 0.21/0.23/0.28 | 0.29/0.32/0.27 | 0.17/0.17/0.17 |
+| aux linear | 2 | 0.70/0.53/0.56 | 0.19/0.33/0.09 | 0.53/0.43/0.41 | 0.13/0.21/0.08 |
+| aux linear | 4 | 0.81/0.62/0.67 | 0.24/0.25/0.29 | 0.37/0.33/0.39 | 0.18/0.18/0.18 |
+| aux linear | 6 | 0.73/0.72/0.88 | 0.21/0.20/0.26 | 0.30/0.29/0.31 | 0.17/0.17/0.16 |
+
+(For runs whose held-out lens never reaches 0.95 at any layer — the
+non-converged aux cells — "below ℓ\*" means all 8 layers.)
+
+**The answer itself (j = k) at layers below ℓ\***, probe vs lens max:
+
+| arm | k=2 | k=4 | k=6 |
+|---|---|---|---|
+| baseline | 1.00/0.98/1.00 vs 0.81/0.70/0.93 | 1.00/0.97/0.94 vs 0.91/0.84/0.62 | 0.74/0.71/0.83 vs 0.59/0.68/0.81 |
+| aux uniform | 0.93/0.91/0.16 vs 0.91/0.88/0.19 | 0.95/0.73/0.43 vs 0.94/0.73/0.42 | 0.37/0.87/0.70 vs 0.37/0.87/0.73 |
+| aux linear | 0.84/0.95/0.58 vs 0.86/0.91/0.63 | 0.84/0.65/0.72 vs 0.83/0.64/0.72 | 0.51/0.74/0.92 vs 0.54/0.76/0.93 |
+
+**Findings.**
+1. **Probe ≫ lens below ℓ\* in every run and every k — dark space
+   confirmed in the direction sense, in both arms.** Intermediate
+   trajectory states are substantially linearly recoverable from the
+   supervised position's residual at layers where the lens reads
+   near-chance (best cells 0.55–0.95 vs lens ≤ 0.34 at k ∈ {4, 6};
+   the tiny k=2 stratum reaches lens 0.42). The supervised
+   position is not answer-subspace-only: it carries intermediates in
+   lens-invisible directions. This is a property of the architecture/task,
+   not of the aux loss — baselines show it at least as strongly.
+2. **The aux-specific effect is on the answer direction, not the
+   intermediates.** In baselines the final answer is linearly present
+   well below ℓ\* (probe up to 1.00 where the lens reads 0.62–0.93 at
+   best — the lens *under-reports* the baseline's answer); in aux runs
+   probe ≈ lens for the answer at every layer (|gap| ≤ 0.05 in all 18
+   aux seed-cells vs gaps up to 0.32 in baselines). Per-layer answer
+   supervision aligns the answer
+   information with the unembedding as soon as it exists — it makes the
+   lens a *faithful* readout of the answer while leaving the
+   intermediates in dark directions.
+3. Decodability of intermediates is partial (probe max 0.4–0.95, not
+   1.0) and peaks in the staircase region (late-middle layers, later j
+   at higher layers), consistent with the `<op>`-position staircase.
+
+**Caveats.** k=2 probes fit on only 173 train chains (768 probe params):
+fit accuracy 1.00 vs held-out ~0.4–0.7 — overfit, so k=2 probe values
+are noisy lower bounds on linear decodability; k=4/k=6 probes (4096 fit
+chains) have small fit–eval gaps (e.g. 0.99 vs 0.94). The lens argmaxes
+over the full 10-token vocab while probes are 6-way; this asymmetry is
+inherent to the pre-registered contrast and can only *help* the lens on
+the intermediate rows (its near-chance values are not an artifact).
+
+### 2026-08-01 — Phase 8 regime search: LEGO grokks, per-k, in stages — and the baseline sawtooth appears on a depth-requiring task
+
+Grokking-regime search (EXPERIMENT_PLAN Phase 8 step 1): train on a
+small per-k-waterfill subsample of the train split (`--train-subset`),
+AdamW constant LR 3e-4, batch 512, 50k steps, eval on the full held-out
+split every 500 steps. 3 subset sizes × 3 weight decays, seed 42.
+SkyPilot jobs 159–167 on the local cluster (~24 min each, RTX 3060 Ti):
+
+```
+for n in 2000 5000 10000; do for wd in 0.1 0.3 1.0; do
+  run="S3-grok-sub${n}-wd${wd}-s42-50k"
+  sky exec local-gpu skypilot/local.yaml -d \
+    --env RUN_NAME="$run" \
+    --env RUN_CMD="uv run python -m lego.train --train-subset ${n} --weight-decay ${wd} --lr-schedule constant --total-steps 50000 --eval-every-steps 500 --seed 42 --wandb-project grok-lens --wandb-run-name ${run} --checkpoint-dir \"\${CHECKPOINT_DIR}\"" \
+    --secret WANDB_API_KEY --secret AWS_ACCESS_KEY_ID --secret AWS_SECRET_ACCESS_KEY
+done; done
+```
+
+Per-k metrics from `lego.analyze_grok_stability` (first crossing ≥ 0.95
+/ dips < 0.90 after it / occupancy; wandb IDs in the project under the
+run names):
+
+| cell | memorize | k2 | k3 | k4 | k5 | k6 |
+|---|---|---|---|---|---|---|
+| sub2000-wd0.1 | 2000 | — (0.35) | — (0.24) | — (0.32) | — (0.33) | — (0.32) |
+| sub2000-wd0.3 | 2300 | — (0.33) | — (0.23) | — (0.31) | — (0.32) | — (0.30) |
+| sub2000-wd1.0 | 5400 | — (0.54) | — (0.29) | — (0.31) | — (0.33) | — (0.33) |
+| sub5000-wd0.1 | 4000 | — (0.63) | — (0.46) | — (0.37) | — (0.32) | — (0.32) |
+| sub5000-wd0.3 | 5300 | — (0.63) | — (0.44) | — (0.35) | — (0.31) | — (0.31) |
+| sub5000-wd1.0 | 18800 | 21.5k, 19 dips, occ 0.19 | — (0.77) | — (0.60) | — (0.40) | — (0.38) |
+| sub10000-wd0.1 | 6400 | 13.5k, 0, occ 0.89 | 13.5k, 0, occ 1.00 | 21.5k, 0, occ 0.98 | 33.5k, 0, occ 0.97 | 45k, 0, occ 0.55 |
+| sub10000-wd0.3 | 9400 | 16k, 10 dips, occ 0.49 | 32.5k, 0, occ 0.83 | — (0.90) | — (0.72) | — (0.34) |
+| sub10000-wd1.0 | 19000 | 12.5k, 34 dips, occ 0.53 | 12.5k, 35 dips, occ 0.53 | 15k, 34 dips, occ 0.45 | — (0.49) | — (0.41) |
+
+("—" = never crosses 0.95 in 50k; parenthesis = final accuracy.)
+
+**Findings.**
+1. **A grokking regime exists**: at 10k chains the model memorizes
+   (train 100% by 6–19k steps) then generalizes *per-k in stages* —
+   k2/k3 first, k6 last (sub10000-wd0.1: 13.5k → 45k) — the staged
+   transition the plan flagged as a result on its own. At 2k chains
+   nothing crosses (test drifts to ~0.3); 5k chains is marginal.
+2. **The baseline sawtooth appears on the depth-requiring task**, and
+   weight decay modulates it exactly as the two-ingredient account
+   predicts: wd 0.1 is near-stable post-crossing (0 dips), wd 0.3 gives
+   k2 10 dips / occupancy 0.49, wd 1.0 gives chronic instability (34–35
+   dips per crossed k, occupancy ~0.5, final accuracy *degrading* to
+   0.61–0.86). The LEGO model keeps LayerNorm — baseline instability
+   *if it grokks* was the pre-registered prediction.
+3. Under wd 1.0 memorization itself is late and entangled with the
+   transitions (memorize step 19k > k2 first crossing 12.5k) — the
+   plateau structure is cleanest at wd 0.3.
+
+**Phase 2 cell**: sub10000-wd0.3 (delayed staged generalization +
+visible instability + budget headroom), extended to 100k steps.
+
+### 2026-08-01 — Phase 8 main result: when depth is required, the aux loss *accelerates* staged grokking — and still stabilizes it
+
+Baseline vs aux λ = 0.3 uniform in the chosen grokking cell
+(sub10000-wd0.3, constant LR 3e-4, 100k steps, eval/500), 3 seeds each.
+SkyPilot jobs 168–173 (~47 min baseline / ~55 min aux per run):
+
+```
+for s in 42 43 44; do for arm in base lensaux; do
+  # base:    run="S3-grok-sub10000-wd0.3-base-s${s}-100k";                extra=""
+  # lensaux: run="S3-grok-sub10000-wd0.3-lensaux0.3-uniform-s${s}-100k"; extra="--lens-aux --lens-aux-weight 0.3"
+  sky exec local-gpu skypilot/local.yaml -d \
+    --env RUN_NAME="$run" \
+    --env RUN_CMD="uv run python -m lego.train --train-subset 10000 --weight-decay 0.3 --lr-schedule constant --total-steps 100000 --eval-every-steps 500 ${extra} --seed ${s} --wandb-project grok-lens --wandb-run-name ${run} --checkpoint-dir \"\${CHECKPOINT_DIR}\"" \
+    --secret WANDB_API_KEY --secret AWS_ACCESS_KEY_ID --secret AWS_SECRET_ACCESS_KEY
+done; done
+```
+
+Per-k first crossing (steps, per seed s42/s43/s44; `analyze_grok_stability`):
+
+| arm | k2 | k3 | k4 | k5 | k6 |
+|---|---|---|---|---|---|
+| baseline | 20k/6.5k/23.5k | 37.5k/6.5k/24k | 62k/7.5k/48.5k | 87k/9.5k/74.5k | **—**/16.5k/90.5k |
+| aux uniform | 9k/8.5k/10k | 9k/8.5k/8k | 9.5k/11.5k/8.5k | 12k/15.5k/10.5k | 15.5k/18.5k/13.5k |
+
+Post-crossing dips < 0.90 (summed over k) and occupancy range; final
+test mean:
+
+| arm | seed | total dips | occupancy (min–max over k) | final mean |
+|---|---|---|---|---|
+| baseline | 42 | 1 | 0.83–0.93 (k6 never crosses; 0.920 at end) | 0.932 |
+| baseline | 43 | 15 | 0.83–0.98 (k6: 11 dips) | 0.987 |
+| baseline | 44 | 14 | 0.89–0.95 | 0.969 |
+| aux | 42 | 1 | 0.98–1.00 | 1.000 |
+| aux | 43 | 4 | 0.95–0.99 | 0.997 |
+| aux | 44 | 1 | 0.87–1.00 (k2 occ 0.87 = borderline evals on the 43-example stratum, 0 dips) | 1.000 |
+
+wandb IDs: b7780wrm / kq5trf6k / dfhj5xcv (base),
+fqarlnit / 4aahoi1b / nspjct9b (aux). Memorize steps 7.2–10.7k (base),
+8.4–8.9k (aux) — both arms have a genuine plateau before the k ≥ 3
+transitions.
+
+**Findings.**
+1. **The first-arrival delay reverses sign when depth is required.** On
+   the arithmetic tasks the aux loss delayed first grokking ~2–4.7×; on
+   LEGO-in-a-grokking-regime it *accelerates* every k ≥ 4 stage in the
+   two slow-baseline seeds and on the median (k6 first crossing: aux
+   15.5k vs baseline 90.5k, with one baseline seed never crossing in
+   100k), compressing the whole staircase into ~8–18.5k steps. The
+   fast-baseline outlier s43 crosses each stage slightly before its aux
+   counterpart — acceleration is a median/2-of-3-seed effect; what is
+   3/3 is that aux timing never blows up while baseline timing can.
+2. **Baseline first-crossing is heavy-tailed across seeds** (k6 range
+   16.5k → never); aux is tight (13.5–18.5k). The aux loss regularizes
+   the transition's *timing*, not just its stability.
+3. **Stabilization survives where the shallow-collapse exit is closed.**
+   Baselines show the sawtooth in 2/3 seeds (15 and 14 dips; the
+   s42 exception has only 1 dip but chronic sub-0.95 wobble, occupancy
+   0.83–0.93); aux runs are near-absorbing in 3/3 (≤ 1 dip per k,
+   occupancy 0.95–1.00 modulo the k2 small-stratum note).
+4. **No short-chain capability cost in this regime** (final mean
+   0.997–1.000 incl. k0/k1), unlike the promptly-generalizing regime's
+   k ≤ 1 losses.
+
+**Caveats (Phase 8 head-to-head).** Run-to-run variance in this regime is substantial even at
+fixed seed-relevant config: the 50k search run at the same cell/seed
+(663lqx6q) crossed k2 at 16k with 10 dips where the 100k rerun
+(b7780wrm, identical settings for its first 50k) crossed at 20k with 1 —
+GPU nondeterminism moves threshold crossings and dip counts; the
+qualitative phenotype (staged transitions; baseline instability; aux
+acceleration + stability) is consistent everywhere, and all claims
+above rest on the 3-seed contrasts, not single runs. Baseline
+instability at wd 0.3 is milder than the arithmetic-task sawtooth; the
+search showed it scales with wd (34–35 dips per k at wd 1.0), so the
+stability contrast here is conservative.
+
+### 2026-08-02 — Phase 9, data-rich pair: the realistic full-sequence objective slows the task; full-sequence deep supervision on top of it kills it
+
+Phase 9 (EXPERIMENT_PLAN) corrects the Phase 5 framing: supervise **all**
+positions, as a real LM would be trained, and ask whether deep
+supervision hurts. New `--base-loss all-positions` = final-layer
+next-token CE at every non-pad position. Data-rich regime (canonical
+40-epoch settings), seed 42, SkyPilot jobs 174–175 (~20 min each):
+
+```
+uv run python -m lego.train --base-loss all-positions --seed 42 \
+  --wandb-run-name S3-std-8L-splitku-fullseqbase-s42 --checkpoint-dir <dir>
+uv run python -m lego.train --base-loss all-positions --lens-aux \
+  --lens-aux-weight 0.3 --lens-aux-mode all-positions --seed 42 \
+  --wandb-run-name S3-std-8L-splitku-fullseq-lensaux0.3-allpos-s42 --checkpoint-dir <dir>
+```
+
+(Run via `sky exec local-gpu skypilot/local.yaml` as in Phase 8; launch
+env identical.) Held-out accuracy at the matched 20,960-step budget,
+wandb 4qx4msct / y8blx6eq:
+
+| arm | k2 | k3 | k4 | k5 | k6 | mean |
+|---|---|---|---|---|---|---|
+| answer-only base (canonical, for reference) | 1.00 | 1.00 | 1.00 | 1.00 | 1.00 | ~1.00 |
+| full-seq base, no aux | 0.51 | 0.76 | 0.79 | 0.62 | 0.46 | 0.49 |
+| full-seq base + full-seq aux λ=0.3 | 0.09 | 0.08 | 0.14 | 0.16 | 0.16 | 0.16 (chance) |
+
+The realistic base objective alone already slows task acquisition badly
+at matched budget (train answer accuracy never reaches 0.95); adding
+full-sequence deep supervision reduces the model to chance on every
+stratum. Position-by-position lens/probe readouts (`analyze_fullseq`,
+CPU sanity pass; the recorded GPU pass is job 182): the full-seq aux
+model's lens is *perfectly legible everywhere* — structural next tokens
+(the `<op>`/`<predict>` markers) read at 1.00 from layer 0, and the
+`<predict>` distribution sits at exactly ln 6 entropy at every layer for
+k = 4 — while probes find no intermediates because the model never
+computes any. Deep supervision made every layer answer-shaped and the
+task died: legibility without competence. P2's lens-vs-probe contrast is
+therefore evaluable only on arms that learn (the full-seq base, and the
+grokking-regime arms below).
+
+### 2026-08-02 — Phase 9, grokking regime: under the realistic objective the aux loss delays or breaks grokking and stabilizes nothing
+
+Same cell and settings as the Phase 8 head-to-head (sub10000, wd 0.3,
+constant LR, 100k, eval/500), with the full-sequence base loss; aux arm
+adds `--lens-aux --lens-aux-mode all-positions --lens-aux-weight 0.3`.
+SkyPilot jobs 176–181 (~42 min base / ~55 min aux per run); commands as
+in the data-rich entry plus the Phase 8 grokking flags. wandb:
+rjqa6atc / 4ledieft / ul1z17eh (base), peyc9taf / pg5o9enz / 88c2es51
+(aux).
+
+Per-k first crossing (s42/s43/s44):
+
+| arm | memorize | k2 | k3 | k4 | k5 | k6 |
+|---|---|---|---|---|---|---|
+| full-seq base | 17.1k/15.5k/19.9k | 12.5k/14.5k/17k | 20k/13.5k/19.5k | —/14.5k/— | —/17k/— | —/21.5k/— |
+| full-seq + aux | 40k/52.4k/22.3k | 30.5k/—/30.5k | 56k/—/19k | —/—/21k | —/—/37k | —/—/— |
+
+Post-crossing dips < 0.90 / occupancy at the crossed strata:
+
+| run | worst strata |
+|---|---|
+| base s42 | k2: 69 dips, occ 0.25; k3: occ 0.11 |
+| base s43 | k6: 122 dips, occ 0.04 (k2–k5 occ 0.87–1.00) |
+| base s44 | k2: 154 dips, occ 0.01; k3: 66 dips, occ 0.04 |
+| aux s42 | k3: 30 dips, occ 0.01; k2: 7 dips, occ 0.69 |
+| aux s43 | nothing ever crosses (final k2/k3 0.67/0.81) |
+| aux s44 | k5: 27 dips, occ 0.02 (k2–k4: 3–5 dips, occ 0.91–0.94) |
+
+Final test mean: base 0.38/0.88/0.37; aux 0.45/0.18/0.74.
+
+**Findings (P1 scorecard).**
+1. **The realistic base objective alone degrades both speed and
+   stability**: vs the answer-only baseline in the same cell, staged
+   grokking still happens but only 1/3 seeds completes the staircase in
+   100k, and the sawtooth is far more violent (69–154 dips at the worst
+   stratum vs ≤ 15 total for answer-only baselines).
+2. **Full-sequence deep supervision delays the transition — sometimes
+   past the budget — with heterogeneous outcomes where it lands**:
+   memorization is delayed 1.1–3.4× in every seed, most measurable
+   first crossings are delayed ~1.8–2.8× (s44 k3 is unchanged within
+   noise), one seed never crosses any stratum in 100k (k ≤ 4 stall at 0.58–0.81; k ≥ 5 at chance), and
+   k6 never crosses under the aux loss. But "destructive" would
+   overstate it: in the two seeds that do transition, the aux run ends
+   with *higher* final accuracy on every stratum than its base
+   counterpart (final means 0.45/0.74 vs 0.38/0.37) and is markedly
+   more stable at its crossed strata in s44 (k2–k4: 3–5 dips,
+   occupancy 0.91–0.94, vs the base's 154 dips at k2) — though not in
+   s42 (k3: 30 dips, occupancy 0.01). Later-but-better where the
+   transition comes; stuck at chance where it doesn't. Seed variance
+   dominates every cross-arm comparison in this regime.
+3. Together with the data-rich pair: whether deep supervision helps or
+   harms is entirely a property of *what is supervised*. Supervising a
+   true, task-relevant quantity (the answer) at one position is benign
+   to strongly beneficial; supervising every position's next token —
+   most of which are irreducible noise on this task — is harmful at the
+   base level and disastrous as per-layer supervision, consistent with
+   the shuffled-target specificity control on the arithmetic tasks.
+
+### 2026-08-02 — Phase 9 attribution arm: on the realistic base, even answer-shaped aux is harmful
+
+One-seed control (data-rich, canonical budget, SkyPilot job 183, wandb
+yjtu14kn): full-sequence base loss + the *answer-mode* aux
+(`--base-loss all-positions --lens-aux --lens-aux-weight 0.3`, uniform).
+Result: chance on every stratum (final test mean 0.173; k2–k6
+0.10–0.23). So the harm is not only "noise targets at every layer": on
+the full-sequence base objective, even the aux form that was benign and
+beneficial on the answer-only base destroys learning at matched budget.
+The benignness of answer-shaped deep supervision is contingent on the
+base objective, not just on the aux targets. (Single seed, one regime —
+scoped accordingly.)
+
+### 2026-08-02 — Phase 9 lens/probe verdict (P2): full-sequence supervision hides the intermediates from the lens everywhere; probes still see them
+
+Recorded position-by-position analysis (`lego.analyze_fullseq`; SkyPilot
+jobs 182 and 185; JSONs in the run results). Held-out chains; "lens max /
+probe max anywhere" = best cell over all (layer, position); chance 0.17.
+
+Data-rich four-way, k=4 intermediates (traj[1]/traj[2]/traj[3]):
+
+| arm | lens max anywhere | probe max anywhere |
+|---|---|---|
+| answer-only base | 0.97 / 1.00 / 1.00 (op staircase) | 1.00 / 1.00 / 1.00 |
+| answer-only aux | ≤ 0.34 below ℓ\* (Phase 7) | 0.95 at best cells (Phase 7) |
+| full-seq base | 0.26 / 0.18 / 0.18 | 1.00 / 1.00 / 0.29 |
+| full-seq base + full-seq aux | 0.30 / 0.18 / 0.20 | 1.00 / 0.41 / 0.18 |
+
+Grokking-regime spot checks on the arms that learn (fullseq base s43,
+which solves k2–k6; fullseq aux s44, which solves k2–k5): identical
+pattern — lens ≤ 0.30 on every intermediate at every position and layer,
+probes recover traj[1] at 1.00 and traj[2] at 0.69–0.80.
+
+### 2026-08-02 — Phase 9 dose-response: the full-sequence harm is presence, not strength
+
+Data-rich, seed 42, λ ∈ {0.01, 0.1} full-sequence aux on the
+full-sequence base (SkyPilot jobs 186–187; wandb 10u7e220 / qzbki6a2;
+commands as the λ = 0.3 run with `--lens-aux-weight` swapped):
+
+| λ | held-out mean at 20,960 steps |
+|---|---|
+| 0.01 | 0.164 (chance) |
+| 0.1 | 0.165 (chance) |
+| 0.3 | 0.162 (chance) |
+
+A 1%-weight full-sequence deep-supervision term blocks the task as
+completely as a 30% one — the exact mirror of the arithmetic-task
+finding that the answer-shaped *benefits* are flat from λ = 0.01 to
+3.0. In both directions, what matters is whether per-layer supervision
+is present and what it points at, not how hard it pushes. (Single seed
+per λ, one regime.)
+
+### 2026-08-02 — Phase 9 learnability check: the full-sequence base objective converges given budget; the full-sequence aux failure is not a budget or difficulty artifact
+
+Before interpreting full-sequence grokking dynamics, establish that the
+objective can be trained at all (SkyPilot jobs 188–193, seed 42;
+`--n-epochs 120` for k6ext, `--k-max 4/3 --total-steps 20000` for the
+easier tasks; wandb qajoz9rz / odxejh03 / z8rcvn3a / xxopj1kw /
+dusvswcb / and the k3-aux run):
+
+| config | base (no aux) | + full-seq aux λ = 0.3 |
+|---|---|---|
+| k_max=6, 21k steps (matched budget) | 0.49 partial | 0.16 chance |
+| k_max=6, 63k steps (3× budget) | **0.983** (k3–k6 cross 13k/16k/23k/35k; k2 stratum 0.67, never crosses) | **0.164 chance** |
+| k_max=4, 20k steps | 0.945 (k3 crosses 9.5k) | 0.117 chance |
+| k_max=3, 20k steps | 0.40 (1,243 train chains — data-starved, not comparable) | chance |
+
+**Findings.**
+1. **The full-sequence base objective is trainable to near-full task
+   competence** — the matched-budget deficit was a budget effect, not a
+   learnability failure. Grokking-dynamics claims about the full-seq
+   baseline therefore rest on a demonstrably learnable objective.
+   (Anomaly worth flagging: the 43-example k=2 stratum lags badly under
+   full-sequence training in every run that otherwise converges —
+   0.67–0.84 — where answer-only training gets it to 1.00.)
+2. **The full-sequence aux failure survives every margin we gave it**:
+   3× budget at k_max=6, an easier task (k_max=4) that the base solves
+   within the same 20k budget, and λ down to 0.01 (dose-response entry).
+   Its inability to learn in the data-rich regime is a property of the
+   objective combination, not of budget, task size, or weight. (The
+   grokking-regime aux runs' partial learning — k2–k4 in 2/3 seeds —
+   remains the only setting where this arm learns anything; contrast
+   scoped accordingly.)
+3. k_max=3 leaves only 1,554 total chains, too few for the data-rich
+   framing; k_max=4 is the right "easier task" control.
+
+### 2026-08-03 — Phase 9 long-horizon aux check: the marginal-solution basin is escapable at k_max=4 — ~10× delayed, with a permanent short-chain deficit
+
+Does the full-seq aux arm *eventually* learn (pre-registered
+long-horizon check)? k_max=4, λ = 0.3 all-positions on the full-seq
+base, 200k steps (SkyPilot job 194, wandb 4ricj7xh):
+
+| metric | value |
+|---|---|
+| memorize | 30.5k (vs base 6.3k at k_max=4 — ~5× later) |
+| k4 first crossing | 52k, then 0 dips, occupancy 1.00, final 0.992 |
+| k3 | never crosses; plateaus ~0.78 |
+| k2 | never crosses; plateaus ~0.61 |
+| final test mean | 0.950 |
+
+The layer-0-satisfiable marginal solution is **not a terminal basin at
+k_max=4**: the run is flat at chance until ~30k, then transitions —
+flat-then-sudden, grokking-shaped — and the hardest stratum converges
+and holds perfectly. But the short strata plateau *below what the base
+objective reached at one-tenth the budget* (base at 20k: k3 0.985,
+k2 0.837), so the difficulty ordering inverts: under full-sequence deep
+supervision the easy strata are the casualties, consistent with the
+answer-dilution account (short chains contribute the fewest informative
+targets, so their answer gradient is weakest against the per-layer
+noise-target pressure). Whether the k_max=6 aux arm is likewise
+escapable on some longer horizon (it is flat through 63k) remains open.
+(Single seed.)
+
+**P2 confirmed, strengthened.** The pre-registered prediction was that
+full-sequence deep supervision would make intermediates lens-invisible
+while probes still find them; what the data show is that the
+*full-sequence objective itself* already does this — the answer-only
+baseline's op-position staircase (lens up to 1.00 on intermediates) is
+erased the moment those positions acquire next-token targets, in the
+base arm as much as the aux arm, including in models that demonstrably
+compute the intermediates (they solve those strata). The lens's
+own-output readout behaves exactly as predicted throughout: structural
+next tokens read at 1.00 from layer 0 under the aux loss, unpredictable
+positions sit at calibrated near-uniform, and the `<predict>`
+distribution sharpens to the answer where the answer is learned.
+Layer-0-legible structural tokens vs layer-7 answers also means the
+progression depth tracks target difficulty. The general statement that
+survives all four arms: **the logit lens shows exactly what the
+training objective put into the unembedding basis — and nothing else;
+linear probes see whatever the model actually computes.**

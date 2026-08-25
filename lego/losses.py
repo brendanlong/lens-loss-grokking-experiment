@@ -34,6 +34,24 @@ def compute_answer_only_loss(
     return torch.nn.functional.cross_entropy(predict_logits, targets)
 
 
+def compute_full_sequence_loss(logits: Tensor, input_ids: Tensor) -> Tensor:
+    """Next-token cross-entropy at every non-pad position (final layer).
+
+    The realistic LM objective: logits at position t score input_ids[t+1],
+    pad targets masked via ignore_index. The answer token is included (it
+    is the next token at the <predict> position), so answer accuracy
+    remains well-defined; the operand positions add noise-prediction
+    pressure (operands are uniform random), which is the point of the
+    full-sequence arm.
+    """
+    targets = input_ids[:, 1:].reshape(-1)
+    return torch.nn.functional.cross_entropy(
+        logits[:, :-1].reshape(-1, logits.size(-1)),
+        targets,
+        ignore_index=PAD_ID,
+    )
+
+
 def _layer_weights(n_intermediate: int, weighting: str, device: torch.device) -> Tensor:
     """Per-layer weights over the L-1 intermediate layers, summing to 1.
 
