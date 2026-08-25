@@ -14,6 +14,8 @@ Usage:
 """
 
 import re
+import sys
+from collections.abc import Iterable
 from typing import Protocol
 
 import wandb
@@ -27,22 +29,26 @@ RunMetrics = tuple[int | None, int | None, int, float, float, float, int]
 class _Run(Protocol):
     """The slice of wandb's public-API Run we use (no importable stub)."""
 
-    def history(self, keys: list[str], pandas: bool) -> list[dict[str, float]]: ...
+    def scan_history(self, keys: list[str]) -> Iterable[dict[str, float]]: ...
 
 
 def run_metrics(run: _Run) -> RunMetrics | None:
     """Per-run stability metrics.
 
     Returns (first_cross, stable_cross, dips_below_090, occupancy,
-    tail5k_frac, tail10k_loss, last_step). ``occupancy`` is the fraction of
+    tail5k_frac, tail10k_loss, last_step), or None for runs without a
+    test/acc history (e.g. the lego runs sharing the wandb project).
+    ``occupancy`` is the fraction of
     evals at/after first crossing with acc >= 0.95 — "what % of the time is
     the model grokking" — which uses the whole tail and is therefore much
     less sensitive to end-of-run censoring than ``stable_cross``.
     ``tail10k_loss`` is mean test loss over the final 10k steps (an
     occupancy-like continuous measure).
     """
+    # scan_history: full resolution (history() samples to 500 rows, which
+    # silently under-counts dips on the long-horizon runs).
     hist = sorted(
-        run.history(keys=["test/acc", "test/loss"], pandas=False),
+        run.scan_history(keys=["test/acc", "test/loss"]),
         key=lambda h: h["_step"],
     )
     if not hist:  # runs without test/acc (e.g. lego runs in the same project)
@@ -81,8 +87,12 @@ def main() -> None:
             continue
         seed = match.group(1)
         cell = run.name.replace(f"-s{seed}", "")
+        if run.summary.get("test/acc") is None:  # cheap pre-filter: lego runs
+            print(f"(skipping {run.name}: no test/acc history)", file=sys.stderr)
+            continue
         metrics = run_metrics(run)
         if metrics is None:
+            print(f"(skipping {run.name}: no test/acc history)", file=sys.stderr)
             continue
         cells.setdefault(cell, []).append((seed, *metrics))
 

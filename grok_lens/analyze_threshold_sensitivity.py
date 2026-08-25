@@ -4,8 +4,11 @@ The stability metrics use two thresholds (first crossing / occupancy at
 test acc >= 0.95, dips at < 0.90) so occupancy isn't inflated by
 borderline evals. This script recomputes dip counts at a single 0.95
 threshold (dips = post-first-crossing evals < 0.95) next to the reported
-< 0.90 counts, over the arithmetic cells in the public wandb project, to
-check that the baseline-vs-aux contrast doesn't depend on the choice.
+< 0.90 counts, over every from-scratch arithmetic cell in the public
+wandb project (baselines, the λ sweep, both Muon arms, no-LN, the
+wd sweep, the shuffled-target control, subtraction; the continuation
+runs are excluded), to check that the baseline-vs-aux contrast doesn't
+depend on the choice.
 
 Usage:
     uv run python -m grok_lens.analyze_threshold_sensitivity
@@ -17,8 +20,8 @@ import wandb
 
 PROJECT = "brendanlong-com/grok-lens"
 CELL_RE = re.compile(
-    r"^p113(?:sub)?-L\d-lam[\d.]+-(?:uniform|linear)-frac0\.3"
-    r"(?:-(?:torch)?muon)?(?:-\d+k)?$"
+    r"^p113(?:sub)?-L\d-lam[\d.]+-(?:uniform|linear|shuf)-frac0\.3"
+    r"(?:-[a-z0-9.]+)*$"
 )
 
 
@@ -33,8 +36,10 @@ def main() -> None:
         cell = run.name.replace(f"-s{seed}", "")
         if not CELL_RE.match(cell):
             continue
+        # scan_history: full resolution (history() samples, which silently
+        # under-counts dips on the long-horizon runs).
         hist = sorted(
-            run.history(keys=["test/acc"], samples=10_000, pandas=False),
+            run.scan_history(keys=["test/acc"]),
             key=lambda h: h["_step"],
         )
         accs = [h["test/acc"] for h in hist]

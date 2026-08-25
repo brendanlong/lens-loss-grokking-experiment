@@ -11,8 +11,8 @@ modular arithmetic and a multi-hop composition task:
 1. **Grokking in LayerNorm transformers never actually sticks.** Run
    past the grok point and 2–3-layer AdamW baselines fall out of
    generalization dozens of times per 50k steps — still collapsing at
-   500k — with Muon at 2 layers just as unstable. First-crossing "grok step" metrics
-   hide this. The instability *requires* LayerNorm: with an LN-free
+   500k — with Muon at 2 layers just as unstable. First-crossing
+   "grok step" metrics hide this. The instability *requires* LayerNorm: with an LN-free
    architecture the same recipe is near-absorbing — and the canonical
    interpretability model (Nanda et al.) is LN-free, which is why the
    sawtooth is missing from canonical grokking accounts.
@@ -60,7 +60,9 @@ experimental log — per-seed tables, exact commands, and the correction
 lineage — is in [RESULTS.md](RESULTS.md), with the pre-registered
 predictions in [EXPERIMENT_PLAN.md](EXPERIMENT_PLAN.md). Training curves
 for every run: [public wandb project](https://wandb.ai/brendanlong-com/grok-lens).
-Final checkpoints for all 181 runs:
+Final checkpoints for all 181 runs — the ~193 minus the
+proportional-sampling arm (curves in wandb; it never leaves chance) and
+one aborted duplicate:
 [HF dataset](https://huggingface.co/datasets/brendanlong/lens-loss-grokking-experiment).
 
 ## Repo layout
@@ -88,7 +90,7 @@ Requires Python ≥ 3.12 and [uv](https://docs.astral.sh/uv/):
 
 ```bash
 uv sync
-uv run pytest   # 95 CPU tests, ~10 s
+uv run pytest   # 95 CPU tests, ~5 s
 ```
 
 A GPU is optional for the analyses (checkpoints are downloaded) and
