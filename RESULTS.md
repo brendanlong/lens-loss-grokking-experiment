@@ -14,6 +14,10 @@
 > [public project](https://wandb.ai/brendanlong-com/grok-lens).
 > `--save-checkpoint` in historical commands performed the private S3
 > upload and has no equivalent here (checkpoints always save locally).
+> `--generate-n N` in historical lego commands streamed N generated
+> examples; here the equivalent is `--n-epochs` over the enumerated
+> train split (the default 40 epochs ≈ the old `--generate-n 10000000`;
+> see the note in `lego/config.py`).
 > Entries dated 2026-08-01 onward were run from this repo directly, via
 > `skypilot/local.yaml` on the maintainers' local cluster — those
 > commands are copy-pasteable as recorded (the S3 sync they reference is
@@ -1530,3 +1534,86 @@ progression depth tracks target difficulty. The general statement that
 survives all four arms: **the logit lens shows exactly what the
 training objective put into the unembedding basis — and nothing else;
 linear probes see whatever the model actually computes.**
+
+### 2026-08-24 — Public-release audit: threshold sensitivity, layer-0 lens coverage, script fixes
+
+The writeup's stability metrics use two thresholds (first crossing /
+occupancy at test acc ≥ 0.95, dips at < 0.90) so occupancy isn't
+inflated by borderline evals. This entry records the sensitivity check
+behind the writeup's "conclusions are unchanged at a single threshold"
+note: recompute dips as post-first-crossing evals < **0.95** (occupancy
+already uses ≥ 0.95 and is unchanged by construction), over every
+from-scratch arithmetic cell — baselines including the instrumented
+ffttrace reruns, the λ sweep, both Muon arms, no-LN, the wd sweep, the
+shuffled-target control, subtraction; continuations excluded — from the
+public wandb histories via `scan_history` (full eval resolution):
+
+```bash
+uv run python -m grok_lens.analyze_threshold_sensitivity
+```
+
+The script prints every matched cell per seed; the table summarizes the
+cells quoted in the writeup (dips < 0.90 → dips < 0.95, per-seed
+ranges):
+
+| cell | dips < 0.90 | dips < 0.95 |
+|---|---|---|
+| L2 AdamW baseline, 50k | 33–39 | 42–47 |
+| L2 AdamW baseline, 500k (s42) | 270 | 342 |
+| L2 AdamW baseline, instrumented ffttrace reruns | 20–112 | 29–128 |
+| L2 aux λ ∈ {0.01…3.0} | 0–3 | 0–7 |
+| L2 aux λ = 0.3, 500k (s42) | 13 | 17 |
+| L3 AdamW baseline, 30k (10 seeds) | 12–40 | 14–51 |
+| L3 AdamW baseline, 50k | 41–55 | 45–68 |
+| L3 uniform aux (10 seeds) | 0–2 | 0–3 |
+| L3 linear aux (10 seeds) | 0–10 | 0–12 |
+| L2 Muon (torch.optim) baseline | 39–48 | 43–50 |
+| L2 Muon (torch.optim) aux | 3–5 | 6–8 |
+| L3 Muon (torch.optim) baseline | 7–17 | 11–22 |
+| L3 Muon (torch.optim) aux | 11–15 | 15–18 |
+| no-LN baseline | 2–4 | 4–5 |
+| wd = 0.5 baseline | 14–20 | 17–27 |
+| wd = 0.25 baseline | 3 | 3–4 |
+| shuffled-target (s43, the one grokking seed) | 48 | 126 |
+| L1 baseline (grokked runs incl. 50k ext.) | 0–1 | 1–2 |
+| sub L2 baseline, 50k | 33–72 | 37–83 |
+| sub L2 aux (50k/100k) | 0–3 | 1–3 |
+
+The single threshold raises every dip count (borderline evals now
+count — the shuffled-target run nearly triples, 48 → 126, consistent
+with its curve hovering at the boundary) and changes no ordering: every
+baseline/aux contrast is preserved, the flat λ dose-response is intact,
+and Muon-L3 — the one cell where the aux arm was never the stabler one —
+remains the exception under either threshold. The superseded hand-rolled
+Muon arm (`-muon-50k` cells) appears in the script output with the same
+picture.
+
+**Layer-0 lens coverage (backing the writeup's truncation claim).** The
+"ALL 18 L2 aux runs at 1.000" layer-0 result above predates the
+torch.optim.Muon arm; the writeup's counts are now 21 L2 and 33 L3 aux
+runs. Verified from the public wandb summaries
+(`lens_test/acc_layer_0`): all 21 L2 aux runs (15 AdamW λ-sweep +
+3 hand-rolled Muon + 3 torch.optim Muon) and 32 of 33 L3 aux runs
+(20 AdamW uniform+linear + 10 hand-rolled Muon + 3 torch.optim Muon)
+end at ≥ 0.9995. The one exception is hand-rolled-Muon L3 s47, whose
+final eval lands inside one of that arm's dips (lens 0.72 / test 0.89
+at step 50k; both 1.000 through 49.8k, and 379/500 evals ≥ 0.999).
+Reproduce:
+
+```python
+import wandb
+
+for r in wandb.Api().runs("brendanlong-com/grok-lens"):
+    if "-L2-" in r.name or "-L3-" in r.name:
+        print(r.name, r.summary.get("lens_test/acc_layer_0"))
+```
+
+Mechanical fixes from the same audit: `analyze_stability.py` crashed
+with a ZeroDivisionError on runs without `test/acc` histories (the lego
+runs share the wandb project) — it now skips them with a stderr notice —
+and both it and the new sensitivity script use `scan_history` rather
+than the sampled `history()` (the same silently-under-counts-dips
+lesson recorded for the lego analysis above); verified to reproduce the
+500k baseline's 270 dips / 0.930 occupancy exactly. Also:
+`skypilot/reproduce.yaml` declared `WANDB_API_KEY` under `envs:` where
+the README said `--secret` — moved to `secrets:` to match `local.yaml`.

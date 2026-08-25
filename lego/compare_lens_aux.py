@@ -1,6 +1,6 @@
 """Compare the logit-lens staircase with vs without the lens-aux loss.
 
-grok_lens Phase 5 analysis (see experiments/grok_lens/EXPERIMENT_PLAN.md):
+grok_lens Phase 5 analysis (see EXPERIMENT_PLAN.md):
 for the baseline and lens-aux LEGO runs, probe at the <predict> position
 per layer and per chain length k:
 

@@ -33,4 +33,6 @@ run: |
 
 envs:
   RUN_CMD: ""
+
+secrets:
   WANDB_API_KEY: ""
