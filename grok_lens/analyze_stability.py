@@ -30,7 +30,7 @@ class _Run(Protocol):
     def history(self, keys: list[str], pandas: bool) -> list[dict[str, float]]: ...
 
 
-def run_metrics(run: _Run) -> RunMetrics:
+def run_metrics(run: _Run) -> RunMetrics | None:
     """Per-run stability metrics.
 
     Returns (first_cross, stable_cross, dips_below_090, occupancy,
@@ -45,6 +45,8 @@ def run_metrics(run: _Run) -> RunMetrics:
         run.history(keys=["test/acc", "test/loss"], pandas=False),
         key=lambda h: h["_step"],
     )
+    if not hist:  # runs without test/acc (e.g. lego runs in the same project)
+        return None
     steps = [int(h["_step"]) for h in hist]
     accs = [h["test/acc"] for h in hist]
     losses = [h["test/loss"] for h in hist]
@@ -79,7 +81,10 @@ def main() -> None:
             continue
         seed = match.group(1)
         cell = run.name.replace(f"-s{seed}", "")
-        cells.setdefault(cell, []).append((seed, *run_metrics(run)))
+        metrics = run_metrics(run)
+        if metrics is None:
+            continue
+        cells.setdefault(cell, []).append((seed, *metrics))
 
     print(
         "stable is right-censored at the run budget: a 'stable' value within a\n"

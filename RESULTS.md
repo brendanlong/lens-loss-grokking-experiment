@@ -14,6 +14,9 @@
 > [public project](https://wandb.ai/brendanlong-com/grok-lens).
 > `--save-checkpoint` in historical commands performed the private S3
 > upload and has no equivalent here (checkpoints always save locally).
+> `--generate-n 10000000` in historical lego commands streamed ~10M
+> generated examples; here the equivalent is the default `--n-epochs 40`
+> over the enumerated train split (see the note in `lego/config.py`).
 > Entries dated 2026-08-01 onward were run from this repo directly, via
 > `skypilot/local.yaml` on the maintainers' local cluster — those
 > commands are copy-pasteable as recorded (the S3 sync they reference is
@@ -1530,3 +1533,48 @@ progression depth tracks target difficulty. The general statement that
 survives all four arms: **the logit lens shows exactly what the
 training objective put into the unembedding basis — and nothing else;
 linear probes see whatever the model actually computes.**
+
+### 2026-08-24 — Public-release audit: threshold sensitivity of the stability metrics
+
+The writeup's stability metrics use two thresholds (first crossing /
+occupancy at test acc ≥ 0.95, dips at < 0.90) so occupancy isn't
+inflated by borderline evals. This entry records the sensitivity check
+behind the writeup's "conclusions are unchanged at a single threshold"
+note: recompute dips as post-first-crossing evals < **0.95** (occupancy
+already uses ≥ 0.95 and is unchanged by construction), over every
+arithmetic cell, from the public wandb histories at full eval
+resolution:
+
+```bash
+uv run python -m grok_lens.analyze_threshold_sensitivity
+```
+
+Per-cell ranges (dips < 0.90 → dips < 0.95, per seed):
+
+| cell | dips < 0.90 | dips < 0.95 |
+|---|---|---|
+| L2 AdamW baseline, 50k | 33–39 | 42–47 |
+| L2 AdamW baseline, 500k (s42) | 270 | 342 |
+| L2 aux λ ∈ {0.01…3.0} | 0–3 | 0–7 |
+| L2 aux λ = 0.3, 500k (s42) | 13 | 17 |
+| L3 AdamW baseline, 30k (10 seeds) | 12–40 | 14–51 |
+| L3 uniform aux (10 seeds) | 0–2 | 0–3 |
+| L3 linear aux (10 seeds) | 0–10 | 0–12 |
+| L2 Muon (torch.optim) baseline | 39–48 | 43–50 |
+| L2 Muon aux | 3–5 | 6–8 |
+| L3 Muon baseline | 7–17 | 11–22 |
+| L3 Muon aux | 11–15 | 15–18 |
+| L1 baseline (grokked runs incl. 50k ext.) | 0–1 | 1–2 |
+| sub L2 baseline, 50k | 33–72 | 37–83 |
+| sub L2 aux (50k/100k) | 0–3 | 1–3 |
+
+The single threshold raises every dip count slightly (borderline evals
+now count) and changes no ordering: every baseline/aux contrast keeps
+its order-of-magnitude gap, and the flat λ dose-response is intact.
+
+Two mechanical fixes from the same audit: `analyze_stability.py`
+crashed with a ZeroDivisionError on runs without `test/acc` histories
+(the lego runs share the wandb project) — it now skips them; and
+`skypilot/reproduce.yaml` declared `WANDB_API_KEY` under `envs:` where
+the README said `--secret` — moved to `secrets:` to match
+`local.yaml`.

@@ -34,5 +34,8 @@ uv run python -m lego.analyze_fullseq \
 echo "=== Stability metrics (occupancy, dips; needs wandb login) ==="
 uv run python -m grok_lens.analyze_stability || echo "skipped (wandb login required)"
 
+echo "=== Threshold-sensitivity check (dips at a single 0.95 threshold; needs wandb login) ==="
+uv run python -m grok_lens.analyze_threshold_sensitivity || echo "skipped (wandb login required)"
+
 echo "=== Figures (needs wandb login) ==="
 uv run python -m grok_lens.make_figures || echo "skipped (wandb login required)"

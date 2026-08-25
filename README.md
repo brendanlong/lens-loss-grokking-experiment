@@ -9,13 +9,13 @@ We expected it to break grokking. Instead we found, across ~193 runs on
 modular arithmetic and a multi-hop composition task:
 
 1. **Grokking in LayerNorm transformers never actually sticks.** Run
-   past the grok point and 2–3-layer baselines fall out of
+   past the grok point and 2–3-layer AdamW baselines fall out of
    generalization dozens of times per 50k steps — still collapsing at
-   500k — under AdamW *and* Muon. First-crossing "grok step" metrics
+   500k — with Muon at 2 layers just as unstable. First-crossing "grok step" metrics
    hide this. The instability *requires* LayerNorm: with an LN-free
    architecture the same recipe is near-absorbing — and the canonical
    interpretability model (Nanda et al.) is LN-free, which is why the
-   sawtooth went unreported.
+   sawtooth is missing from canonical grokking accounts.
 2. **The aux loss delays first grokking ~2× but makes it stick** —
    at *any* strength from 1% to 300% of the main loss (presence, not
    strength).
@@ -40,12 +40,14 @@ modular arithmetic and a multi-hop composition task:
    reappears; deep supervision again delays the transition, and the
    dose-response is again flat (λ = 0.01 acts like λ = 0.3 — now on
    the cost side: at matched data-rich budget any λ pins the model at
-   chance while making every layer's lens perfectly legible).
+   chance, with every layer's lens perfectly legible in the analyzed
+   λ = 0.3 arm).
    Stabilization is what doesn't transfer: post-transition outcomes
    are seed-heterogeneous.
 6. **The lens shows the loss; probes show the computation.** In models
    that demonstrably solve multi-hop strata, the intermediate states
-   are linearly recoverable from the residual stream (~1.0) yet
+   are linearly recoverable from the residual stream (1.00 for the
+   first composition, 0.69–0.80 for the second) yet
    invisible to the logit lens at every layer and position (≤ 0.30,
    with or without deep supervision). **The logit lens reads out the
    trained targets — nothing more; probes see what is actually
@@ -86,7 +88,7 @@ Requires Python ≥ 3.12 and [uv](https://docs.astral.sh/uv/):
 
 ```bash
 uv sync
-uv run pytest   # 95 CPU tests, ~5 s
+uv run pytest   # 95 CPU tests, ~10 s
 ```
 
 A GPU is optional for the analyses (checkpoints are downloaded) and
