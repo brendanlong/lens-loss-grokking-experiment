@@ -26,9 +26,9 @@ modular arithmetic and a multi-hop composition task:
    component failures constantly reaching the output). The aux loss
    blocks that pruning: components still break, but 0/159 tracked
    failures ever reached the output. **Stability is failure isolation,
-   not calm** — and not stasis either: in the aux arm's last 20k
-   steps at 0.999 accuracy, 13–34% of the circuit's Fourier power
-   relocates to different components. Stability takes two
+   not calm** — and not stasis either: in two of three instrumented
+   seeds, 25–28% of the circuit's Fourier power sits elsewhere at 50k
+   than at 30k while accuracy holds at 0.999. Stability takes two
    ingredients: the LN+wd effective-learning-rate churn supplies the
    perturbations, the sparse circuit supplies the fragility. Removing
    either suffices.

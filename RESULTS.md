@@ -1618,64 +1618,86 @@ lesson recorded for the lego analysis above); verified to reproduce the
 `skypilot/reproduce.yaml` declared `WANDB_API_KEY` under `envs:` where
 the README said `--secret` — moved to `secrets:` to match `local.yaml`.
 
-### 2026-09-22 — Drift re-analysis of the churn traces: the stable arm's circuit is not static
+### 2026-09-22 — Drift re-analysis of the churn traces: the stable arm's circuit is not static (in 2/3 seeds)
 
 Prompted by the representational-drift argument in [*What if not
 Circuits?*](https://www.lesswrong.com/posts/mMERyrvEJ4xbiozie/what-if-not-circuits),
-which distinguishes drift along *irrelevant* coordinates (unused
-degrees of freedom wiggling while the occupied ones sit still) from
-drift *between* solutions. The existing churn figure answers a
-different question — whether component failures reach the output — so
-the traces were re-read for how much the circuit itself moves while the
-capability doesn't. No new training; same six `-ffttrace` runs.
+which distinguishes drift along *irrelevant* coordinates (unused degrees
+of freedom wiggling while the occupied ones sit still) from drift
+*between* solutions. The existing churn figure answers a different
+question — whether component failures reach the output — so the traces
+were re-read for how much the circuit itself moves while the capability
+doesn't. No new training; same six `-ffttrace` runs.
 
 ```bash
-uv run python -m grok_lens.analyze_drift          # window defaults to step 30k+
+uv run python -m grok_lens.analyze_drift                 # window 30k+, active >= 4%
+uv run python -m grok_lens.analyze_drift --active 0.03   # threshold sensitivity
 ```
 
 Window steps 30k–50k (every ffttrace run first-crosses by 14.4k, so the
-window is unambiguously post-grok, and the aux arm's concentration has
-already plateaued):
+window is unambiguously post-grok). Endpoints are 10-eval means: single
+evals in these traces swing by tens of percent, which is the subject of
+the analysis and therefore cannot also be the measurement.
 
-| run | acc mean | acc min | power moved | eff #comp | deaths | births | repaired | permanent |
-|---|---|---|---|---|---|---|---|---|
-| baseline s42 | 0.8485 | 0.088 | 0.09 | 2.8 → 2.7 | 0 | 0 | 4 | 3 |
-| baseline s43 | 0.9777 | 0.115 | 0.46 | 4.1 → 6.3 | 1 | 1 | 2 | 3 |
-| baseline s44 | 0.8690 | 0.070 | 0.09 | 2.1 → 2.5 | 0 | 0 | 4 | 4 |
-| aux λ=0.3 s42 | 0.9993 | 0.893 | 0.30 | 19.2 → 15.8 | 4 | 1 | 9 | 3 |
-| aux λ=0.3 s43 | 0.9979 | 0.730 | 0.13 | 19.8 → 18.1 | 0 | 0 | 6 | 0 |
-| aux λ=0.3 s44 | 0.9989 | 0.878 | 0.34 | 21.2 → 14.8 | 4 | 0 | 8 | 3 |
+| run | acc mean | acc min | power moved | path len | eff #comp | deaths | births | repaired | unrepaired |
+|---|---|---|---|---|---|---|---|---|---|
+| baseline s42 | 0.8485 | 0.088 | 0.16 | 15.0 | 3.0 → 2.5 | 0 | 0 | 5 | 3 |
+| baseline s43 | 0.9777 | 0.115 | 0.45 | 12.1 | 4.7 → 5.8 | 2 | 1 | 2 | 3 |
+| baseline s44 | 0.8690 | 0.070 | 0.06 | 12.3 | 2.2 → 2.5 | 0 | 0 | 4 | 4 |
+| aux λ=0.3 s42 | 0.9993 | 0.893 | 0.28 | 7.0 | 19.8 → 15.9 | 4 | 1 | 9 | 3 |
+| aux λ=0.3 s43 | 0.9979 | 0.730 | 0.05 | 6.0 | 18.9 → 19.3 | 0 | 0 | 6 | 0 |
+| aux λ=0.3 s44 | 0.9989 | 0.878 | 0.25 | 7.2 | 19.6 → 15.8 | 2 | 0 | 8 | 3 |
 
-`power moved` = total-variation distance between the window's endpoint
-spectra (the share of embedding Fourier power sitting on different
-frequencies at 50k than at 30k); `eff #comp` = participation ratio
-1/Σp²; deaths/births cross 4% power share in either direction;
-collapses are >50% single-eval power losses by a ≥4% component, split
-by whether it regains ≥80% of its pre-collapse share within 2.5k steps.
+`power moved` = TV distance between the endpoint spectra (*net*
+displacement); `path len` = summed consecutive-eval TV (total motion);
+`eff #comp` = participation ratio 1/Σp²; deaths cross 4% down to <1%,
+births the other way; collapses are >50% single-eval share losses by a
+≥4% component, `repaired` if it regains ≥80% of its pre-collapse share
+within 25 evals. The final 25 evals of each run cannot be classified
+and are excluded.
 
-1. **The stable arm drifts.** At 0.998–0.999 mean accuracy, 13–34% of
-   the circuit's power relocates over 20k steps, 0–4 components holding
-   ≥4% of it drop below 1%, and the participation ratio falls 19–21 →
-   15–18. So the late tail is turnover *plus* slow consolidation, not a
-   steady state — "absorbing" describes the behaviour, not the weights.
-2. **Most component collapses are repairs, not deaths** (9/12, 6/6,
-   8/11 in the aux arm) — the component comes back. This is the
-   mechanism behind the earlier 0/159-reaching-the-output result seen
-   from the other side: failures are both isolated *and* undone.
-3. **The baseline's small `power moved` in s42/s44 is not stability.**
-   By 30k those runs have consolidated onto ~2.7 effective components,
-   so there is little left to redistribute; s43, the one seed still
-   holding an ensemble at 30k, moves 0.46. The measure is only
-   informative where there is a circuit to rearrange.
-4. Scope: measured in the embedding's Fourier coordinates, the only
-   per-component quantity logged at every eval. It bounds how much that
-   part of the circuit moves, not the whole parameter vector. Whether
-   the drifting components are individually load-bearing is answered
-   elsewhere and negatively-by-design (graceful knockout degradation);
-   what says the drifting ensemble is load-bearing *in aggregate* is
-   the aux-off continuation quartet above — stop supplying the
-   maintaining gradient and the ensemble erodes and the instability
-   returns.
+1. **Two of three aux seeds drift; the third doesn't.** At 0.998–0.999
+   mean accuracy, s42/s44 move 25–28% of the circuit's power, lose 2–4
+   components from ≥4% to <1%, and fall 19.6–19.8 → 15.8–15.9 effective
+   components. s43 moves 5%, loses none, and ends slightly *wider*
+   (18.9 → 19.3). Seed-heterogeneous, so the honest headline is "the
+   capability's constancy is not evidence the implementation is
+   constant", not "the circuit always rewrites itself".
+2. **Where it happens, it is consolidation more than replacement.**
+   Decomposing the gained power by destination, 51 / 52 / 62% of it
+   lands on components that were already ≥4% and 1–37% on ones that
+   were below 1%; pooled over the three aux seeds there are 8 deaths
+   and 1 birth. Earlier drafts of this entry
+   said "partly self-replacing"; one birth across three seeds does not
+   support that and it has been removed.
+3. **Most component collapses repair** (9/12, 6/6, 8/11). The *counts*
+   are threshold-sensitive (aux s42 totals 25 / 12 / 8 at 3 / 4 / 5%
+   activity) but the repaired *fraction* is not (67–100% throughout).
+   Note also the scale: every aux collapse in the window starts from a
+   4.2–7.7% component, vs baseline collapses ranging up to 43%, so "a
+   component collapsed" means ~2–4pp of power moved here.
+4. **The baseline's smaller endpoint displacement is not steadiness.**
+   By 30k s42/s44 hold ~2.5 effective components and have little left
+   to redistribute. Path length inverts the impression: baselines
+   12.1–15.0 vs aux 6.0–7.2 — the baseline fluctuates about twice as
+   much per eval and simply ends up back where it started. Net
+   displacement is ≫ smaller than path length in both arms, so every
+   "power moved" figure is a floor.
+5. **Scope, and what this does not show.** Measured in the embedding's
+   Fourier coordinates, the only per-component quantity logged at every
+   eval; it bounds how much that part of the circuit moves, not the
+   whole parameter vector. Everything is a power *share*, so a
+   component can "die" by the rest growing around it (embedding norms
+   shrink under wd = 1.0 throughout). Deaths/births are endpoint-to-
+   endpoint, so a component that dies and returns inside the window is
+   invisible. Most importantly, the drift measurement **cannot**
+   distinguish the LW post's two cases: the knockout results say aux
+   components are individually *not* load-bearing, so "redistribution
+   among functionally interchangeable coordinates" fits these data.
+   The evidence that the ensemble is actively maintained rather than
+   idle is the aux-off continuation quartet above (remove the gradient
+   → wd re-sparsifies → instability returns), which is a separate
+   experiment.
 
 New: `grok_lens/analyze_drift.py`, `figures/drift.png` (writeup Figure
 4; the later figures shift by one). `figures/churn.png` is unchanged
