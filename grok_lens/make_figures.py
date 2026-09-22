@@ -10,9 +10,10 @@ Writeup figures:
                              absorbing (the hero image)
   2. knockout.png          — accuracy after frequency knockouts
   3. churn.png             — per-frequency power churn vs output accuracy
-  4. formation.png         — circuit concentration during formation
-  5. lego_grok_fullseq.png — full-sequence grokking regime, all 6 runs
-  6. probes_fullseq.png    — lens vs probe under full-sequence training
+  4. drift.png             — circuit composition drift under a flat capability
+  5. formation.png         — circuit concentration during formation
+  6. lego_grok_fullseq.png — full-sequence grokking regime, all 6 runs
+  7. probes_fullseq.png    — lens vs probe under full-sequence training
                              (needs data/analysis/fullseq-grok.json; see
                              scripts/reproduce_analyses.sh)
 
@@ -35,6 +36,7 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import torch
 import wandb
+from matplotlib.colors import LinearSegmentedColormap
 
 from common.checkpoint import artifact_path
 
@@ -232,6 +234,165 @@ def fig_churn(api: wandb.Api, outdir: Path) -> None:
     )
     fig.tight_layout(rect=(0, 0, 1, 0.95))
     fig.savefig(outdir / "churn.png", bbox_inches="tight")
+    plt.close(fig)
+
+
+def _spectrum_trace(
+    api: wandb.Api, name: str, since: int
+) -> tuple[list[int], list[float], list[list[float]]]:
+    """Steps, test accuracy, and L1-normalised per-frequency power shares."""
+    run = next(r for r in api.runs("brendanlong-com/grok-lens") if r.name == name)
+    hist = sorted(
+        run.scan_history(keys=[*FREQ_KEYS, "test/acc"]), key=lambda h: h["_step"]
+    )
+    hist = [h for h in hist if h["_step"] >= since]
+    steps = [int(h["_step"]) for h in hist]
+    accs = [h["test/acc"] for h in hist]
+    shares = []
+    for h in hist:
+        row = [h[k] for k in FREQ_KEYS]
+        total = sum(row)
+        shares.append([v / total for v in row])
+    return steps, accs, shares
+
+
+def _power_changed_hands(p: list[float], q: list[float]) -> float:
+    """Total-variation distance: the share of power sitting elsewhere."""
+    return 0.5 * sum(abs(a - b) for a, b in zip(p, q, strict=True))
+
+
+def fig_drift(api: wandb.Api, outdir: Path) -> None:
+    """Circuit composition drifts even where the capability is pinned.
+
+    Answers the question the other figures don't: the stable (aux) arm's
+    accuracy is flat at 1.0 for the whole post-grok tail, but the circuit
+    underneath it is not the same circuit from one end of that tail to the
+    other. Companion to fig_churn, which frames the same traces around the
+    output-coupling result instead.
+    """
+    since = 20_000
+    # Component identities in the trace panel, direct-labelled (the CVD
+    # check on this triple needs the secondary encoding).
+    detail = [
+        (32, "#009E73", "breaks and repairs", 6),
+        (49, "#B07A00", "is born", -8),
+        (50, "#8B4FA8", "dies", 0),
+    ]
+    fig = plt.figure(figsize=(7.6, 7.4), dpi=160)
+    gs = fig.add_gridspec(
+        3, 2, height_ratios=[0.75, 1.7, 1.25], hspace=0.5, wspace=0.28
+    )
+    for col, (kind, color, title) in enumerate(
+        [
+            ("lam0.0", VERM, "baseline"),
+            ("lam0.3", BLUE, "aux λ = 0.3  (the stable arm)"),
+        ]
+    ):
+        steps, accs, shares = _spectrum_trace(
+            api, f"p113-L2-{kind}-uniform-frac0.3-s42-ffttrace", since
+        )
+        ax = fig.add_subplot(gs[0, col])
+        style(ax)
+        ax.plot(steps, accs, color=color, lw=1.0)
+        ax.set_ylim(-0.03, 1.08)
+        ax.set_title(title, fontsize=9.5, loc="left", color="#333333")
+        ax.set_ylabel("test acc", fontsize=8.5)
+
+        ax2 = fig.add_subplot(gs[1, col])
+        style(ax2)
+        ax2.grid(False)
+        active = [k for k in range(56) if max(s[k] for s in shares) >= 0.03]
+        # Sort by centre of mass in time so births and deaths read as a diagonal.
+        active.sort(
+            key=lambda k: (
+                sum(i * s[k] for i, s in enumerate(shares)) / sum(s[k] for s in shares)
+            )
+        )
+        grid = [[s[k] for s in shares] for k in active]
+        cmap = LinearSegmentedColormap.from_list(f"seq{col}", ["#ffffff", color])
+        im = ax2.imshow(
+            grid,
+            aspect="auto",
+            cmap=cmap,
+            vmin=0,
+            vmax=max(max(r) for r in grid),
+            extent=(steps[0], steps[-1], len(active) - 0.5, -0.5),
+            interpolation="nearest",
+        )
+        ax2.set_yticks(range(len(active)))
+        ax2.set_yticklabels([f"k={k + 1}" for k in active], fontsize=5.5)
+        ax2.set_xlabel("training step", fontsize=8.5)
+        if col == 0:
+            ax2.set_ylabel("Fourier component of the embedding", fontsize=8.5)
+        # Per-panel colour scales: the arms differ ~7x in peak share.
+        cb = fig.colorbar(im, ax=ax2, pad=0.02, fraction=0.045)
+        cb.ax.tick_params(labelsize=6, colors="#666666")
+        cb.outline.set(visible=False)
+        cb.set_label("power share", fontsize=6.5, color="#666666")
+
+    ax3 = fig.add_subplot(gs[2, 0])
+    style(ax3)
+    ax3.grid(axis="y", color="#e6e6e6", lw=0.6)
+    for kind, color in [("lam0.0", VERM), ("lam0.3", BLUE)]:
+        for seed in SEEDS:
+            steps, _, shares = _spectrum_trace(
+                api, f"p113-L2-{kind}-uniform-frac0.3-s{seed}-ffttrace", since
+            )
+            ax3.plot(
+                steps,
+                [_power_changed_hands(shares[0], s) for s in shares],
+                color=color,
+                lw=1.4,
+                alpha=0.85,
+            )
+    ax3.set_ylim(0, None)
+    ax3.set_xlabel("training step", fontsize=8.5)
+    ax3.set_ylabel("share of circuit power\nheld elsewhere than at 20k", fontsize=8.5)
+    ax3.set_title(
+        "drift from the step-20k circuit", fontsize=9, loc="left", color="#333333"
+    )
+    ax3.text(46000, 0.50, "baseline", color=VERM, fontsize=8.5, ha="right")
+    ax3.text(46000, 0.07, "aux λ = 0.3", color=BLUE, fontsize=8.5, ha="right")
+
+    ax4 = fig.add_subplot(gs[2, 1])
+    style(ax4)
+    ax4.grid(axis="y", color="#e6e6e6", lw=0.6)
+    steps, accs, shares = _spectrum_trace(
+        api, "p113-L2-lam0.3-uniform-frac0.3-s42-ffttrace", since
+    )
+    for k in range(56):
+        if max(s[k] for s in shares) >= 0.03 and k + 1 not in {d[0] for d in detail}:
+            ax4.plot(steps, [s[k] for s in shares], color=GRAY, lw=0.5, alpha=0.35)
+    for freq, color, label, dy in detail:
+        ax4.plot(steps, [s[freq - 1] for s in shares], color=color, lw=1.6)
+        ax4.annotate(
+            f"k={freq} {label}",
+            xy=(steps[-1], shares[-1][freq - 1]),
+            xytext=(5, dy),
+            textcoords="offset points",
+            fontsize=7.5,
+            color=color,
+            va="center",
+        )
+    ax4.set_xlabel("training step", fontsize=8.5)
+    ax4.set_ylabel("power share", fontsize=8.5)
+    ax4.set_xlim(steps[0], steps[-1] + 9500)
+    ax4.set_xticks([20000, 30000, 40000, 50000])
+    ax4.set_title(
+        "aux λ = 0.3, seed 42: individual components",
+        fontsize=9,
+        loc="left",
+        color="#333333",
+    )
+
+    fig.suptitle(
+        "Post-grok, the circuit keeps changing under a capability that doesn't",
+        fontsize=10.5,
+        x=0.02,
+        ha="left",
+        color="#222222",
+    )
+    fig.savefig(outdir / "drift.png", bbox_inches="tight")
     plt.close(fig)
 
 
@@ -682,6 +843,8 @@ def main() -> None:
     print("knockout.png done")
     fig_churn(api, outdir)
     print("churn.png done")
+    fig_drift(api, outdir)
+    print("drift.png done")
     fig_formation(api, outdir)
     print("formation.png done")
     fig_lego_grok_fullseq_grid(api, outdir)

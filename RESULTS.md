@@ -1617,3 +1617,66 @@ lesson recorded for the lego analysis above); verified to reproduce the
 500k baseline's 270 dips / 0.930 occupancy exactly. Also:
 `skypilot/reproduce.yaml` declared `WANDB_API_KEY` under `envs:` where
 the README said `--secret` — moved to `secrets:` to match `local.yaml`.
+
+### 2026-09-22 — Drift re-analysis of the churn traces: the stable arm's circuit is not static
+
+Prompted by the representational-drift argument in [*What if not
+Circuits?*](https://www.lesswrong.com/posts/mMERyrvEJ4xbiozie/what-if-not-circuits),
+which distinguishes drift along *irrelevant* coordinates (unused
+degrees of freedom wiggling while the occupied ones sit still) from
+drift *between* solutions. The existing churn figure answers a
+different question — whether component failures reach the output — so
+the traces were re-read for how much the circuit itself moves while the
+capability doesn't. No new training; same six `-ffttrace` runs.
+
+```bash
+uv run python -m grok_lens.analyze_drift          # window defaults to step 30k+
+```
+
+Window steps 30k–50k (every ffttrace run first-crosses by 14.4k, so the
+window is unambiguously post-grok, and the aux arm's concentration has
+already plateaued):
+
+| run | acc mean | acc min | power moved | eff #comp | deaths | births | repaired | permanent |
+|---|---|---|---|---|---|---|---|---|
+| baseline s42 | 0.8485 | 0.088 | 0.09 | 2.8 → 2.7 | 0 | 0 | 4 | 3 |
+| baseline s43 | 0.9777 | 0.115 | 0.46 | 4.1 → 6.3 | 1 | 1 | 2 | 3 |
+| baseline s44 | 0.8690 | 0.070 | 0.09 | 2.1 → 2.5 | 0 | 0 | 4 | 4 |
+| aux λ=0.3 s42 | 0.9993 | 0.893 | 0.30 | 19.2 → 15.8 | 4 | 1 | 9 | 3 |
+| aux λ=0.3 s43 | 0.9979 | 0.730 | 0.13 | 19.8 → 18.1 | 0 | 0 | 6 | 0 |
+| aux λ=0.3 s44 | 0.9989 | 0.878 | 0.34 | 21.2 → 14.8 | 4 | 0 | 8 | 3 |
+
+`power moved` = total-variation distance between the window's endpoint
+spectra (the share of embedding Fourier power sitting on different
+frequencies at 50k than at 30k); `eff #comp` = participation ratio
+1/Σp²; deaths/births cross 4% power share in either direction;
+collapses are >50% single-eval power losses by a ≥4% component, split
+by whether it regains ≥80% of its pre-collapse share within 2.5k steps.
+
+1. **The stable arm drifts.** At 0.998–0.999 mean accuracy, 13–34% of
+   the circuit's power relocates over 20k steps, 0–4 components holding
+   ≥4% of it drop below 1%, and the participation ratio falls 19–21 →
+   15–18. So the late tail is turnover *plus* slow consolidation, not a
+   steady state — "absorbing" describes the behaviour, not the weights.
+2. **Most component collapses are repairs, not deaths** (9/12, 6/6,
+   8/11 in the aux arm) — the component comes back. This is the
+   mechanism behind the earlier 0/159-reaching-the-output result seen
+   from the other side: failures are both isolated *and* undone.
+3. **The baseline's small `power moved` in s42/s44 is not stability.**
+   By 30k those runs have consolidated onto ~2.7 effective components,
+   so there is little left to redistribute; s43, the one seed still
+   holding an ensemble at 30k, moves 0.46. The measure is only
+   informative where there is a circuit to rearrange.
+4. Scope: measured in the embedding's Fourier coordinates, the only
+   per-component quantity logged at every eval. It bounds how much that
+   part of the circuit moves, not the whole parameter vector. Whether
+   the drifting components are individually load-bearing is answered
+   elsewhere and negatively-by-design (graceful knockout degradation);
+   what says the drifting ensemble is load-bearing *in aggregate* is
+   the aux-off continuation quartet above — stop supplying the
+   maintaining gradient and the ensemble erodes and the instability
+   returns.
+
+New: `grok_lens/analyze_drift.py`, `figures/drift.png` (writeup Figure
+4; the later figures shift by one). `figures/churn.png` is unchanged
+and still carries the output-coupling result.

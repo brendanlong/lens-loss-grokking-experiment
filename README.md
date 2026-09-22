@@ -26,9 +26,12 @@ modular arithmetic and a multi-hop composition task:
    component failures constantly reaching the output). The aux loss
    blocks that pruning: components still break, but 0/159 tracked
    failures ever reached the output. **Stability is failure isolation,
-   not calm** — and it takes two ingredients: the LN+wd
-   effective-learning-rate churn supplies the perturbations, the
-   sparse circuit supplies the fragility. Removing either suffices.
+   not calm** — and not stasis either: in the aux arm's last 20k
+   steps at 0.999 accuracy, 13–34% of the circuit's Fourier power
+   relocates to different components. Stability takes two
+   ingredients: the LN+wd effective-learning-rate churn supplies the
+   perturbations, the sparse circuit supplies the fragility. Removing
+   either suffices.
 4. Controls: the effect is specific to *answer-shaped* supervision (a
    weight-decay sweep and a shuffled-target control both fail to
    reproduce it), and the story replicates on modular subtraction.
