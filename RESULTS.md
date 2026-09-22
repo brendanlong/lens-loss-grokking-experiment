@@ -1617,3 +1617,139 @@ lesson recorded for the lego analysis above); verified to reproduce the
 500k baseline's 270 dips / 0.930 occupancy exactly. Also:
 `skypilot/reproduce.yaml` declared `WANDB_API_KEY` under `envs:` where
 the README said `--secret` — moved to `secrets:` to match `local.yaml`.
+
+### 2026-09-22 — Drift re-analysis of the churn traces: the stable arm's circuit is not static (in 2/3 seeds)
+
+Prompted by the representational-drift argument in [*What if not
+Circuits?*](https://www.lesswrong.com/posts/mMERyrvEJ4xbiozie/what-if-not-circuits),
+which distinguishes drift along *irrelevant* coordinates (unused degrees
+of freedom wiggling while the occupied ones sit still) from drift
+*between* solutions. The existing churn figure answers a different
+question — whether component failures reach the output — so the traces
+were re-read for how much the circuit itself moves while the capability
+doesn't. No new training; same six `-ffttrace` runs.
+
+```bash
+uv run python -m grok_lens.analyze_drift                 # window 30k+, active >= 4%
+uv run python -m grok_lens.analyze_drift --active 0.03   # threshold sensitivity
+```
+
+Window steps 30k–50k (every ffttrace run first-crosses by 14.4k, so the
+window is unambiguously post-grok). Endpoints are 10-eval means: single
+evals in these traces swing by tens of percent, which is the subject of
+the analysis and therefore cannot also be the measurement.
+
+| run | acc mean | acc min | power moved | path len | eff #comp | deaths | births | repaired | unrepaired |
+|---|---|---|---|---|---|---|---|---|---|
+| baseline s42 | 0.8485 | 0.088 | 0.16 | 15.0 | 3.0 → 2.5 | 0 | 0 | 5 | 3 |
+| baseline s43 | 0.9777 | 0.115 | 0.45 | 12.1 | 4.7 → 5.8 | 2 | 1 | 2 | 3 |
+| baseline s44 | 0.8690 | 0.070 | 0.06 | 12.3 | 2.2 → 2.5 | 0 | 0 | 4 | 4 |
+| aux λ=0.3 s42 | 0.9993 | 0.893 | 0.28 | 7.0 | 19.8 → 15.9 | 4 | 1 | 9 | 3 |
+| aux λ=0.3 s43 | 0.9979 | 0.730 | 0.05 | 6.0 | 18.9 → 19.3 | 0 | 0 | 6 | 0 |
+| aux λ=0.3 s44 | 0.9989 | 0.878 | 0.25 | 7.2 | 19.6 → 15.8 | 2 | 0 | 8 | 3 |
+
+`power moved` = TV distance between the endpoint spectra (*net*
+displacement); `path len` = summed consecutive-eval TV (total motion);
+`eff #comp` = participation ratio 1/Σp²; deaths cross 4% down to <1%,
+births the other way; collapses are >50% single-eval share losses by a
+≥4% component, `repaired` if it regains ≥80% of its pre-collapse share
+within 25 evals. The final 25 evals of each run cannot be classified
+and are excluded.
+
+1. **Two of three aux seeds drift; the third doesn't.** At 0.998–0.999
+   mean accuracy, s42/s44 move 25–28% of the circuit's power, lose 2–4
+   components from ≥4% to <1%, and fall 19.6–19.8 → 15.8–15.9 effective
+   components. s43 moves 5%, loses none, and ends slightly *wider*
+   (18.9 → 19.3). Seed-heterogeneous, so the honest headline is "the
+   capability's constancy is not evidence the implementation is
+   constant", not "the circuit always rewrites itself".
+2. **Where it happens, it is consolidation more than replacement.**
+   Decomposing the gained power by destination, 51 / 52 / 62% of it
+   lands on components that were already ≥4% and 1–37% on ones that
+   were below 1%; pooled over the three aux seeds there are 8 deaths
+   and 1 birth. Earlier drafts of this entry
+   said "partly self-replacing"; one birth across three seeds does not
+   support that and it has been removed.
+3. **Most component collapses repair** (9/12, 6/6, 8/11). The *counts*
+   are threshold-sensitive (aux s42 totals 25 / 12 / 8 at 3 / 4 / 5%
+   activity) but the repaired *fraction* is not (67–100% throughout).
+   Note also the scale: every aux collapse in the window starts from a
+   4.2–7.7% component, vs baseline collapses ranging up to 43%, so "a
+   component collapsed" means ~2–4pp of power moved here.
+4. **The baseline's smaller endpoint displacement is not steadiness.**
+   By 30k s42/s44 hold ~2.5 effective components and have little left
+   to redistribute. Path length inverts the impression: baselines
+   12.1–15.0 vs aux 6.0–7.2 — the baseline fluctuates about twice as
+   much per eval and simply ends up back where it started. Net
+   displacement is ≫ smaller than path length in both arms, so every
+   "power moved" figure is a floor.
+5. **Scope, and what this does not show.** Measured in the embedding's
+   Fourier coordinates, the only per-component quantity logged at every
+   eval; it bounds how much that part of the circuit moves, not the
+   whole parameter vector. Everything is a power *share*, so a
+   component can "die" by the rest growing around it (embedding norms
+   shrink under wd = 1.0 throughout). Deaths/births are endpoint-to-
+   endpoint, so a component that dies and returns inside the window is
+   invisible. Most importantly, the drift measurement **cannot**
+   distinguish the LW post's two cases: the knockout results say aux
+   components are individually *not* load-bearing, so "redistribution
+   among functionally interchangeable coordinates" fits these data.
+   The evidence that the ensemble is actively maintained rather than
+   idle is the aux-off continuation quartet above (remove the gradient
+   → wd re-sparsifies → instability returns), which is a separate
+   experiment.
+
+New: `grok_lens/analyze_drift.py`, `figures/drift.png` (writeup Figure
+4; the later figures shift by one). `figures/churn.png` is unchanged
+and still carries the output-coupling result.
+
+### 2026-09-22 — Neuron-population turnover: roles persist, carriers are replaced
+
+Follow-up to the drift entry above. The embedding Fourier measure covers
+3.4% of the parameters and can't see which *units* carry the circuit, so
+the question the representational-drift literature actually asks — same
+role, same neurons? — was unanswerable from `final.pt`-only runs. Added
+`train.py --checkpoint-every` and retrained the seed-42 pair (gpuc job
+`20260922-192242-1a4ce5`, local 3060 Ti, wandb `…-s42-driftckpt`). The job
+was stopped by an external SIGTERM at aux step 49,800; checkpoints through
+49,500 survived, which covers the window, so it was not rerun. These are
+fresh trajectories, not the `-ffttrace` runs (GPU nondeterminism), and the
+checkpoints (328 MB) are not yet on HF.
+
+```bash
+uv run python -m grok_lens.analyze_neuron_drift --checkpoints data/driftckpt/aux-s42 --seed 42
+uv run python -m grok_lens.analyze_neuron_drift --checkpoints data/driftckpt/base-s42 --seed 42
+```
+
+Method: each block-1 MLP neuron's post-ReLU activation at `=` over all
+p² pairs, averaged per value of (a + b), Fourier-transformed → a
+*profile* over the 56 frequencies. Neurons with <50% of variance
+explained by (a + b) are excluded (pre-grok that is *every* neuron — the
+roles don't exist until grokking creates them). A frequency's
+*population* = neurons with ≥10% of profile on it; populations <5
+members are ignored.
+
+| steps 30k–49.5k | test acc (ckpts) | roles start/end/shared | Jaccard @500 | @10k | @19.5k–20k | shuffled null | own-profile cos @~20k | different-neuron cos |
+|---|---|---|---|---|---|---|---|---|
+| baseline | mean 0.975, min 0.558 | 10 / 11 / 9 | 0.52 | 0.26 | 0.17 | 0.16 | 0.80 | 0.79 |
+| aux λ=0.3 | mean 0.9999, min 0.998 | 15 / 15 / 13 | 0.50 | 0.10 | 0.05 | 0.05 | 0.51 | 0.57 |
+
+Endpoint Jaccard vs shuffled null by membership threshold (5 / 10 / 20%):
+aux 0.109 vs 0.094, 0.062 vs 0.046, 0.013 vs 0.012; baseline 0.265 vs
+0.226, 0.190 vs 0.158, 0.111 vs 0.047.
+
+1. **Aux: roles fixed, carriers replaced to chance.** Over 19.5k steps at
+   ≥0.998 accuracy, 13/15 roles persist while the neurons serving them
+   reach chance overlap at every threshold. Threshold-free, a neuron
+   ends less similar to its own past than to a random other neuron now.
+2. **Turnover is not aux-specific.** The baseline's populations also
+   decay to near chance. Its high chance level (0.16, cos 0.79) is
+   because most of its neurons are dominated by one frequency, so
+   identity carries little information to begin with. What the aux arm
+   uniquely shows is turnover under a capability that doesn't move.
+3. **Caveats.** One seed pair; block 1 only (block-0 neurons aren't
+   sum-driven in either arm); roles defined in the Fourier basis of the
+   known algorithm; accuracy at 500-step checkpoints misses short dips.
+   Part of the short-lag turnover is membership flicker near the 10%
+   threshold, but flicker around a stable core would keep long-lag
+   overlap above chance, and it doesn't.

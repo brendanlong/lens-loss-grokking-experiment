@@ -132,6 +132,11 @@ class GrokLensTrainingConfig(BaseTrainingConfig):
     log_every_steps: int = 100
     eval_every_steps: int = 100
 
+    # Save an intermediate checkpoint every N steps (0 = final only). Needed
+    # for any analysis of how the weights themselves move during training;
+    # the per-eval wandb metrics only summarise the embedding.
+    checkpoint_every_steps: int = 0
+
     # Checkpointing / wandb
     checkpoint_dir: str = "data/grok_lens/checkpoints"
     wandb_project: str = "grok-lens"

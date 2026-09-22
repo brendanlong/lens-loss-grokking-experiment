@@ -159,6 +159,15 @@ def train_grok_model(
         for scheduler in schedulers:
             scheduler.step()
 
+        every = config.checkpoint_every_steps
+        if every and step % every == 0:
+            save_model_checkpoint(
+                model,
+                step,
+                model_config.model_dump(),
+                Path(config.checkpoint_dir),
+            )
+
         do_log, do_eval = should_log_and_eval(
             step,
             log_every_steps=config.log_every_steps,
@@ -328,6 +337,12 @@ def main() -> None:
         action="store_true",
         help="Log per-frequency embedding Fourier power at every eval",
     )
+    parser.add_argument(
+        "--checkpoint-every",
+        type=int,
+        default=0,
+        help="Save an intermediate checkpoint every N steps (0 = final only)",
+    )
     parser.add_argument("--seed", type=int, default=42)
     args = parser.parse_args()
 
@@ -373,6 +388,7 @@ def main() -> None:
         log_every_steps=args.log_every_steps,
         eval_every_steps=args.eval_every_steps,
         log_fourier=args.log_fourier,
+        checkpoint_every_steps=args.checkpoint_every,
         checkpoint_dir=args.checkpoint_dir,
         wandb_project=args.wandb_project,
         wandb_run_name=args.wandb_run_name,
