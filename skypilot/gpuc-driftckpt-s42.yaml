@@ -1,3 +1,4 @@
+# gpuc job that produced data/driftckpt (neuron_drift.png): gpuc submit <this> --host local
 name: grok-drift-ckpts-s42
 setup: uv sync --frozen
 command: |

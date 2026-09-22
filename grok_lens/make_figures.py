@@ -12,6 +12,7 @@ Writeup figures:
   3. churn.png             — per-frequency power churn vs output accuracy
   4. drift.png             — circuit composition drift under a flat capability
      neuron_drift.png      — neuron-population turnover per circuit role
+     neuron_drift_baseline.png — the same for the baseline, per-role lift
                              (needs --drift-checkpoints; see RESULTS.md)
   5. formation.png         — circuit concentration during formation
   6. lego_grok_fullseq.png — full-sequence grokking regime, all 6 runs
@@ -49,7 +50,7 @@ from grok_lens.analyze_drift import RUN as FFTTRACE_RUN
 from grok_lens.analyze_drift import Run, power_moved, spectra
 from grok_lens.analyze_fourier import fourier_power
 from grok_lens.analyze_knockout import remove_frequency, test_acc
-from grok_lens.analyze_neuron_drift import populations
+from grok_lens.analyze_neuron_drift import populations, retention_lift
 from grok_lens.analyze_neuron_drift import trace as neuron_trace
 from grok_lens.config import GrokModelConfig
 from grok_lens.data import train_test_split
@@ -420,6 +421,155 @@ def _jaccard_vs_lag(
     return lags, real, null
 
 
+def _largest_persistent_role(pops: list[list[set[int]]], min_pop: int) -> int:
+    persistent = [
+        k for k in range(len(pops[0])) if all(len(p[k]) >= min_pop for p in pops)
+    ]
+    return max(persistent, key=lambda k: sum(len(p[k]) for p in pops))
+
+
+def _membership_raster(
+    ax: "Axes",
+    steps: list[int],
+    pops: list[list[set[int]]],
+    role: int,
+    color: str,
+    label: str,
+) -> None:
+    """Which neurons serve `role` at each checkpoint, ordered by first joining."""
+    members = sorted(
+        set().union(*(p[role] for p in pops)),
+        key=lambda n: next(i for i, p in enumerate(pops) if n in p[role]),
+    )
+    grid = [[1.0 if n in p[role] else 0.0 for p in pops] for n in members]
+    ax.imshow(
+        grid,
+        aspect="auto",
+        cmap=LinearSegmentedColormap.from_list(f"member-{color}", ["#ffffff", color]),
+        interpolation="nearest",
+        extent=(steps[0], steps[-1], len(members), 0),
+    )
+    style(ax)
+    ax.grid(False)
+    ax.set_xlabel("training step", fontsize=8.5)
+    ax.set_ylabel(
+        f"MLP neurons (ordered by\nfirst membership, n = {len(members)})",
+        fontsize=8.5,
+    )
+    ax.set_yticks([])
+    sizes = [len(p[role]) for p in pops]
+    ax.set_title(
+        f"{label}: which neurons serve frequency k = {role + 1} "
+        f"({min(sizes)} to {max(sizes)} at any one time)",
+        fontsize=9,
+        loc="left",
+        color="#333333",
+    )
+
+
+def fig_neuron_drift_baseline(ckpt_root: Path, outdir: Path) -> None:
+    """The baseline's neuron populations, and turnover compared per role.
+
+    The baseline's roles are much bigger than the aux model's (its top
+    frequency is served by most active neurons), so the comparison panel uses
+    chance-corrected retention rather than Jaccard.
+    """
+    since, min_pop = 30_000, 5
+    arms = [("base-s42", VERM, "baseline"), ("aux-s42", BLUE, "aux λ = 0.3")]
+    traces = {}
+    for d, _, _ in arms:
+        steps, accs, profiles, actives = neuron_trace(ckpt_root / d, 42, since, -1, 0.5)
+        pops = [
+            populations(pr, ac, 0.10) for pr, ac in zip(profiles, actives, strict=True)
+        ]
+        traces[d] = (steps, accs, pops, actives)
+
+    steps, accs, pops, actives = traces["base-s42"]
+    persistent = [
+        k for k in range(len(pops[0])) if all(len(p[k]) >= min_pop for p in pops)
+    ]
+    dominant = _largest_persistent_role(pops, min_pop)
+    aux_pops = traces["aux-s42"][2]
+    aux_role = _largest_persistent_role(aux_pops, min_pop)
+    aux_size = sum(len(p[aux_role]) for p in aux_pops) / len(aux_pops)
+    matched = min(
+        (k for k in persistent if k != dominant),
+        key=lambda k: abs(sum(len(p[k]) for p in pops) / len(pops) - aux_size),
+    )
+
+    fig = plt.figure(figsize=(7.6, 8.6), dpi=160)
+    gs = fig.add_gridspec(4, 1, height_ratios=[0.55, 1.3, 1.1, 1.1], hspace=0.55)
+    ax = fig.add_subplot(gs[0])
+    style(ax)
+    ax.plot(steps, accs, color=VERM, lw=1.2)
+    ax.set_ylim(-0.03, 1.06)
+    ax.set_xlim(steps[0], steps[-1])
+    ax.set_ylabel("test acc", fontsize=8.5)
+    ax.set_title(
+        "baseline test accuracy (500-step checkpoints)",
+        fontsize=9,
+        loc="left",
+        color="#333333",
+    )
+    _membership_raster(
+        fig.add_subplot(gs[1]), steps, pops, dominant, VERM, "baseline, dominant role"
+    )
+    _membership_raster(
+        fig.add_subplot(gs[2]),
+        steps,
+        pops,
+        matched,
+        VERM,
+        "baseline, role sized like the aux model's",
+    )
+
+    ax = fig.add_subplot(gs[3])
+    style(ax)
+    for d, color, label in arms:
+        arm_steps, _, arm_pops, arm_actives = traces[d]
+        cadence = arm_steps[1] - arm_steps[0]
+        roles = [
+            k
+            for k in range(len(arm_pops[0]))
+            if all(len(p[k]) >= min_pop for p in arm_pops)
+        ]
+        for i, k in enumerate(roles):
+            lags, lifts = [], []
+            for lag in range(1, len(arm_pops) - 1):
+                value = retention_lift(arm_pops, arm_actives, k, lag, min_pop)
+                if value is not None:
+                    lags.append(lag * cadence)
+                    lifts.append(value)
+            ax.plot(
+                lags,
+                lifts,
+                color=color,
+                lw=1.0,
+                alpha=0.75,
+                label=label if i == 0 else None,
+            )
+    ax.axhline(0, color="#999999", lw=0.8, ls="--")
+    ax.set_xlabel("lag Δ (training steps)", fontsize=8.5)
+    ax.set_ylabel("neurons still serving\nthe role (0 = chance)", fontsize=8.5)
+    ax.set_title(
+        "turnover per persistent role, chance-corrected (one line per role)",
+        fontsize=9,
+        loc="left",
+        color="#333333",
+    )
+    ax.legend(frameon=False, fontsize=8, loc="upper right")
+
+    fig.suptitle(
+        "The baseline replaces its neurons too (seed 42, block 1 MLP)",
+        fontsize=10.5,
+        x=0.02,
+        ha="left",
+        color="#222222",
+    )
+    fig.savefig(outdir / "neuron_drift_baseline.png", bbox_inches="tight")
+    plt.close(fig)
+
+
 def fig_neuron_drift(ckpt_root: Path, outdir: Path) -> None:
     """Roles persist while the neurons carrying them turn over.
 
@@ -469,40 +619,10 @@ def fig_neuron_drift(ckpt_root: Path, outdir: Path) -> None:
         color="#333333",
     )
 
-    # Membership raster for the aux arm's largest role present throughout.
     steps, _, pops, _ = traces["aux-s42"]
-    persistent = [
-        k for k in range(len(pops[0])) if all(len(p[k]) >= min_pop for p in pops)
-    ]
-    role = max(persistent, key=lambda k: sum(len(p[k]) for p in pops))
-    members = sorted(
-        set().union(*(p[role] for p in pops)),
-        key=lambda n: next(i for i, p in enumerate(pops) if n in p[role]),
-    )
-    grid = [[1.0 if n in p[role] else 0.0 for p in pops] for n in members]
-    ax = fig.add_subplot(gs[1, :])
-    ax.imshow(
-        grid,
-        aspect="auto",
-        cmap=LinearSegmentedColormap.from_list("member", ["#ffffff", BLUE]),
-        interpolation="nearest",
-        extent=(steps[0], steps[-1], len(members), 0),
-    )
-    style(ax)
-    ax.grid(False)
-    ax.set_xlabel("training step", fontsize=8.5)
-    ax.set_ylabel(
-        f"MLP neurons (ordered by\nfirst membership, n = {len(members)})",
-        fontsize=8.5,
-    )
-    ax.set_yticks([])
-    sizes = [len(p[role]) for p in pops]
-    ax.set_title(
-        f"aux λ = 0.3: which neurons serve frequency k = {role + 1} "
-        f"({min(sizes)} to {max(sizes)} at any one time)",
-        fontsize=9,
-        loc="left",
-        color="#333333",
+    role = _largest_persistent_role(pops, min_pop)
+    _membership_raster(
+        fig.add_subplot(gs[1, :]), steps, pops, role, BLUE, "aux λ = 0.3"
     )
 
     fig.suptitle(
@@ -974,6 +1094,8 @@ def main() -> None:
     if args.drift_checkpoints.exists():
         fig_neuron_drift(args.drift_checkpoints, outdir)
         print("neuron_drift.png done")
+        fig_neuron_drift_baseline(args.drift_checkpoints, outdir)
+        print("neuron_drift_baseline.png done")
     else:
         print(f"neuron_drift.png skipped: {args.drift_checkpoints} not found")
     fig_formation(api, outdir)
