@@ -1,0 +1,20 @@
+name: grok-drift-ckpts-s42
+setup: uv sync --frozen
+command: |
+  set -e
+  uv run --no-sync python -m grok_lens.train \
+    --wandb-run-name p113-L2-lam0.0-uniform-frac0.3-s42-driftckpt \
+    --checkpoint-dir driftckpt/base-s42 \
+    --seed 42 --total-steps 50000 --log-fourier --checkpoint-every 500
+  uv run --no-sync python -m grok_lens.train \
+    --wandb-run-name p113-L2-lam0.3-uniform-frac0.3-s42-driftckpt \
+    --checkpoint-dir driftckpt/aux-s42 \
+    --aux-lambda 0.3 --seed 42 --total-steps 50000 --log-fourier --checkpoint-every 500
+gpus: 1
+env:
+  REQUIRE_CUDA: "1"
+  PYTHONUNBUFFERED: "1"
+secrets: [WANDB_API_KEY]
+estimated_runtime_min: 60
+max_runtime_min: 180
+cleanup: never

@@ -11,6 +11,8 @@ Writeup figures:
   2. knockout.png          — accuracy after frequency knockouts
   3. churn.png             — per-frequency power churn vs output accuracy
   4. drift.png             — circuit composition drift under a flat capability
+     neuron_drift.png      — neuron-population turnover per circuit role
+                             (needs --drift-checkpoints; see RESULTS.md)
   5. formation.png         — circuit concentration during formation
   6. lego_grok_fullseq.png — full-sequence grokking regime, all 6 runs
   7. probes_fullseq.png    — lens vs probe under full-sequence training
@@ -47,6 +49,8 @@ from grok_lens.analyze_drift import RUN as FFTTRACE_RUN
 from grok_lens.analyze_drift import Run, power_moved, spectra
 from grok_lens.analyze_fourier import fourier_power
 from grok_lens.analyze_knockout import remove_frequency, test_acc
+from grok_lens.analyze_neuron_drift import populations
+from grok_lens.analyze_neuron_drift import trace as neuron_trace
 from grok_lens.config import GrokModelConfig
 from grok_lens.data import train_test_split
 from grok_lens.model import GrokTransformer
@@ -385,6 +389,130 @@ def fig_drift(api: wandb.Api, outdir: Path) -> None:
         color="#222222",
     )
     fig.savefig(outdir / "drift.png", bbox_inches="tight")
+    plt.close(fig)
+
+
+def _jaccard_vs_lag(
+    pops: list[list[set[int]]], actives: list[torch.Tensor], min_pop: int
+) -> tuple[list[int], list[float], list[float]]:
+    """Mean population Jaccard per lag (in checkpoints), and its shuffled null.
+
+    The null replaces each later population by a random draw of the same size
+    from that checkpoint's active neurons, i.e. what overlap looks like if
+    neuron identity carried no information; the expectation is analytic.
+    """
+    lags, real, null = [], [], []
+    for lag in range(1, len(pops)):
+        js, ns = [], []
+        for t in range(len(pops) - lag):
+            pool = int(actives[t + lag].sum())
+            for k, a in enumerate(pops[t]):
+                b = pops[t + lag][k]
+                if len(a) < min_pop or not b:
+                    continue
+                js.append(len(a & b) / len(a | b))
+                inter = len(a) * len(b) / pool
+                ns.append(inter / (len(a) + len(b) - inter))
+        if js:
+            lags.append(lag)
+            real.append(sum(js) / len(js))
+            null.append(sum(ns) / len(ns))
+    return lags, real, null
+
+
+def fig_neuron_drift(ckpt_root: Path, outdir: Path) -> None:
+    """Roles persist while the neurons carrying them turn over.
+
+    Needs the intermediate checkpoints from ``train.py --checkpoint-every``
+    under ``ckpt_root/{base,aux}-s42`` (not part of the published artifacts).
+    """
+    since, min_pop = 30_000, 5
+    arms = [("base-s42", VERM, "baseline"), ("aux-s42", BLUE, "aux λ = 0.3")]
+    traces = {}
+    for d, _, _ in arms:
+        steps, accs, profiles, actives = neuron_trace(ckpt_root / d, 42, since, -1, 0.5)
+        pops = [
+            populations(pr, ac, 0.10) for pr, ac in zip(profiles, actives, strict=True)
+        ]
+        traces[d] = (steps, accs, pops, actives)
+
+    fig = plt.figure(figsize=(7.6, 6.2), dpi=160)
+    gs = fig.add_gridspec(2, 2, height_ratios=[1, 1.35], hspace=0.45, wspace=0.3)
+
+    ax = fig.add_subplot(gs[0, 0])
+    style(ax)
+    for d, color, label in arms:
+        steps, accs, _, _ = traces[d]
+        ax.plot(steps, accs, color=color, lw=1.2, label=label)
+    ax.set_ylim(-0.03, 1.06)
+    ax.set_xlabel("training step", fontsize=8.5)
+    ax.set_ylabel("test acc", fontsize=8.5)
+    ax.set_title("the capability", fontsize=9, loc="left", color="#333333")
+    ax.legend(frameon=False, fontsize=8, loc="lower left")
+
+    ax = fig.add_subplot(gs[0, 1])
+    style(ax)
+    for d, color, label in arms:
+        steps, _, pops, actives = traces[d]
+        lags, real, null = _jaccard_vs_lag(pops, actives, min_pop)
+        cadence = steps[1] - steps[0]
+        x = [lag * cadence for lag in lags]
+        ax.plot(x, real, color=color, lw=1.6, label=label)
+        ax.plot(x, null, color=color, lw=1.0, ls="--", alpha=0.8)
+    ax.set_ylim(0, None)
+    ax.set_xlabel("lag Δ (training steps)", fontsize=8.5)
+    ax.set_ylabel("overlap of neurons serving\na frequency (Jaccard)", fontsize=8.5)
+    ax.set_title(
+        "who carries it (dashed: identity-shuffled chance)",
+        fontsize=9,
+        loc="left",
+        color="#333333",
+    )
+
+    # Membership raster for the aux arm's largest role present throughout.
+    steps, _, pops, _ = traces["aux-s42"]
+    persistent = [
+        k for k in range(len(pops[0])) if all(len(p[k]) >= min_pop for p in pops)
+    ]
+    role = max(persistent, key=lambda k: sum(len(p[k]) for p in pops))
+    members = sorted(
+        set().union(*(p[role] for p in pops)),
+        key=lambda n: next(i for i, p in enumerate(pops) if n in p[role]),
+    )
+    grid = [[1.0 if n in p[role] else 0.0 for p in pops] for n in members]
+    ax = fig.add_subplot(gs[1, :])
+    ax.imshow(
+        grid,
+        aspect="auto",
+        cmap=LinearSegmentedColormap.from_list("member", ["#ffffff", BLUE]),
+        interpolation="nearest",
+        extent=(steps[0], steps[-1], len(members), 0),
+    )
+    style(ax)
+    ax.grid(False)
+    ax.set_xlabel("training step", fontsize=8.5)
+    ax.set_ylabel(
+        f"MLP neurons (ordered by\nfirst membership, n = {len(members)})",
+        fontsize=8.5,
+    )
+    ax.set_yticks([])
+    sizes = [len(p[role]) for p in pops]
+    ax.set_title(
+        f"aux λ = 0.3: which neurons serve frequency k = {role + 1} "
+        f"({min(sizes)} to {max(sizes)} at any one time)",
+        fontsize=9,
+        loc="left",
+        color="#333333",
+    )
+
+    fig.suptitle(
+        "The roles stay; the neurons carrying them turn over (seed 42, block 1 MLP)",
+        fontsize=10.5,
+        x=0.02,
+        ha="left",
+        color="#222222",
+    )
+    fig.savefig(outdir / "neuron_drift.png", bbox_inches="tight")
     plt.close(fig)
 
 
@@ -817,6 +945,12 @@ def main() -> None:
         ),
     )
     parser.add_argument(
+        "--drift-checkpoints",
+        type=Path,
+        default=Path("data/driftckpt"),
+        help="Intermediate checkpoints for neuron_drift.png (train --checkpoint-every)",
+    )
+    parser.add_argument(
         "--legacy-answer-only",
         action="store_true",
         help=(
@@ -837,6 +971,11 @@ def main() -> None:
     print("churn.png done")
     fig_drift(api, outdir)
     print("drift.png done")
+    if args.drift_checkpoints.exists():
+        fig_neuron_drift(args.drift_checkpoints, outdir)
+        print("neuron_drift.png done")
+    else:
+        print(f"neuron_drift.png skipped: {args.drift_checkpoints} not found")
     fig_formation(api, outdir)
     print("formation.png done")
     fig_lego_grok_fullseq_grid(api, outdir)

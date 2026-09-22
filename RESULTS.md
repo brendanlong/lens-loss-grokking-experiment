@@ -1702,3 +1702,54 @@ and are excluded.
 New: `grok_lens/analyze_drift.py`, `figures/drift.png` (writeup Figure
 4; the later figures shift by one). `figures/churn.png` is unchanged
 and still carries the output-coupling result.
+
+### 2026-09-22 — Neuron-population turnover: roles persist, carriers are replaced
+
+Follow-up to the drift entry above. The embedding Fourier measure covers
+3.4% of the parameters and can't see which *units* carry the circuit, so
+the question the representational-drift literature actually asks — same
+role, same neurons? — was unanswerable from `final.pt`-only runs. Added
+`train.py --checkpoint-every` and retrained the seed-42 pair (gpuc job
+`20260922-192242-1a4ce5`, local 3060 Ti, wandb `…-s42-driftckpt`). The job
+was stopped by an external SIGTERM at aux step 49,800; checkpoints through
+49,500 survived, which covers the window, so it was not rerun. These are
+fresh trajectories, not the `-ffttrace` runs (GPU nondeterminism), and the
+checkpoints (328 MB) are not yet on HF.
+
+```bash
+uv run python -m grok_lens.analyze_neuron_drift --checkpoints data/driftckpt/aux-s42 --seed 42
+uv run python -m grok_lens.analyze_neuron_drift --checkpoints data/driftckpt/base-s42 --seed 42
+```
+
+Method: each block-1 MLP neuron's post-ReLU activation at `=` over all
+p² pairs, averaged per value of (a + b), Fourier-transformed → a
+*profile* over the 56 frequencies. Neurons with <50% of variance
+explained by (a + b) are excluded (pre-grok that is *every* neuron — the
+roles don't exist until grokking creates them). A frequency's
+*population* = neurons with ≥10% of profile on it; populations <5
+members are ignored.
+
+| steps 30k–49.5k | test acc (ckpts) | roles start/end/shared | Jaccard @500 | @10k | @19.5k–20k | shuffled null | own-profile cos @~20k | different-neuron cos |
+|---|---|---|---|---|---|---|---|---|
+| baseline | mean 0.975, min 0.558 | 10 / 11 / 9 | 0.52 | 0.26 | 0.17 | 0.16 | 0.80 | 0.79 |
+| aux λ=0.3 | mean 0.9999, min 0.998 | 15 / 15 / 13 | 0.50 | 0.10 | 0.05 | 0.05 | 0.51 | 0.57 |
+
+Endpoint Jaccard vs shuffled null by membership threshold (5 / 10 / 20%):
+aux 0.109 vs 0.094, 0.062 vs 0.046, 0.013 vs 0.012; baseline 0.265 vs
+0.226, 0.190 vs 0.158, 0.111 vs 0.047.
+
+1. **Aux: roles fixed, carriers replaced to chance.** Over 19.5k steps at
+   ≥0.998 accuracy, 13/15 roles persist while the neurons serving them
+   reach chance overlap at every threshold. Threshold-free, a neuron
+   ends less similar to its own past than to a random other neuron now.
+2. **Turnover is not aux-specific.** The baseline's populations also
+   decay to near chance. Its high chance level (0.16, cos 0.79) is
+   because most of its neurons are dominated by one frequency, so
+   identity carries little information to begin with. What the aux arm
+   uniquely shows is turnover under a capability that doesn't move.
+3. **Caveats.** One seed pair; block 1 only (block-0 neurons aren't
+   sum-driven in either arm); roles defined in the Fourier basis of the
+   known algorithm; accuracy at 500-step checkpoints misses short dips.
+   Part of the short-lag turnover is membership flicker near the 10%
+   threshold, but flicker around a stable core would keep long-lag
+   overlap above chance, and it doesn't.

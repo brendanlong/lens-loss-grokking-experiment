@@ -37,6 +37,10 @@ uv run python -m grok_lens.analyze_stability || echo "skipped (wandb login requi
 echo "=== Circuit drift under a flat capability (needs wandb login) ==="
 uv run python -m grok_lens.analyze_drift || echo "skipped (wandb login required)"
 
+# Neuron-population turnover needs intermediate checkpoints (not published):
+#   train.py ... --checkpoint-every 500 --checkpoint-dir data/driftckpt/{base,aux}-s42
+#   uv run python -m grok_lens.analyze_neuron_drift --checkpoints data/driftckpt/aux-s42 --seed 42
+
 echo "=== Threshold-sensitivity check (dips at a single 0.95 threshold; needs wandb login) ==="
 uv run python -m grok_lens.analyze_threshold_sensitivity || echo "skipped (wandb login required)"
 
