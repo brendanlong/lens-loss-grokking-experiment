@@ -124,6 +124,39 @@ def jaccard(a: set[int], b: set[int]) -> float | None:
     return len(a & b) / len(a | b) if (a or b) else None
 
 
+def retention_lift(
+    pops: list[list[set[int]]],
+    actives: list[torch.Tensor],
+    role: int,
+    lag: int,
+    min_pop: int = 5,
+) -> float | None:
+    """Chance-corrected share of a role's neurons still serving it after `lag`.
+
+    Restricted to neurons active at both times, so a neuron that stops being
+    answer-driven altogether is not scored as having left the role (that
+    would bias large roles below chance). Retention is the share of P(t) still
+    in P(t+lag); chance is the share of all both-times-active neurons in
+    P(t+lag), i.e. the retention if later membership ignored identity. Lift
+    rescales so 1 = every neuron stayed and 0 = chance, which makes roles of
+    very different sizes comparable (Jaccard is not: a role holding most
+    neurons overlaps heavily by default). Averaged over t; None if the role is
+    never big enough to measure.
+    """
+    lifts = []
+    for t in range(len(pops) - lag):
+        both = set((actives[t] & actives[t + lag]).nonzero().flatten().tolist())
+        now = pops[t][role] & both
+        later = pops[t + lag][role] & both
+        if len(now) < min_pop or not both:
+            continue
+        chance = len(later) / len(both)
+        if chance >= 1:
+            continue
+        lifts.append((len(now & later) / len(now) - chance) / (1 - chance))
+    return sum(lifts) / len(lifts) if lifts else None
+
+
 def trace(
     checkpoints: Path, seed: int, since: int, block: int, min_frac_sum: float
 ) -> tuple[list[int], list[float], list[torch.Tensor], list[torch.Tensor]]:

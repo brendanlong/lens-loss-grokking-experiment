@@ -1753,3 +1753,36 @@ aux 0.109 vs 0.094, 0.062 vs 0.046, 0.013 vs 0.012; baseline 0.265 vs
    Part of the short-lag turnover is membership flicker near the 10%
    threshold, but flicker around a stable core would keep long-lag
    overlap above chance, and it doesn't.
+
+### 2026-09-22 — Baseline neuron turnover, chance-corrected
+
+Question: does the baseline, whose embedding spectrum barely moves late in
+training, also keep its neurons? New `retention_lift` in
+`analyze_neuron_drift`, new `figures/neuron_drift_baseline.png`. Same
+seed-42 checkpoints as above (this retrained baseline's dominant
+frequencies are k=24/11, not the `-ffttrace` run's k=50: different GPU
+trajectory).
+
+Jaccard is the wrong comparison across arms here: the baseline's roles
+hold up to ~85% of its active neurons, so overlap is high by default.
+Retention lift = (share of P(t) still in P(t+Δ) − chance) / (1 − chance),
+over neurons active at both times, where chance is P(t+Δ)'s share of
+those neurons. The first version computed chance over neurons active at
+t+Δ only while counting neurons that went inactive as leaving; that
+pushed the two largest baseline roles to −0.4, and restricting both
+terms to both-times-active neurons removed it.
+
+Median lift across persistent roles (baseline 6 roles, aux 7):
+
+| lag | baseline | aux λ=0.3 |
+|---|---|---|
+| 500 | 0.58 (0.50–0.81) | 0.71 (0.62–0.72) |
+| 5k | 0.40 (0.30–0.66) | 0.30 (0.20–0.34) |
+| 10k | 0.28 (0.12–0.46) | 0.16 (0.08–0.19) |
+| 19k | 0.07 (0.03–0.21) | 0.05 (−0.01–0.16) |
+
+The baseline is noisier step to step (lower lift at 500) but keeps a
+more persistent core at mid lags. Both reach chance by ~19k. So the
+embedding-spectrum stability does not imply neuron stability; it slows
+the turnover by roughly 1.5–2× at 5–10k lags and doesn't prevent it.
+One seed pair.
