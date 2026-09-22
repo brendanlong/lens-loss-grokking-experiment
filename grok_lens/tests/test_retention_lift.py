@@ -21,4 +21,4 @@ def test_neurons_going_inactive_do_not_count_as_leaving() -> None:
     later_active = ALL.clone()
     later_active[4] = False
     pops = [[{0, 1, 2, 3, 4}], [{0, 1, 2, 3}]]
-    assert retention_lift(pops, [ALL, later_active], 0, 1) == 1.0
+    assert retention_lift(pops, [ALL, later_active], 0, 1, min_pop=3) == 1.0
