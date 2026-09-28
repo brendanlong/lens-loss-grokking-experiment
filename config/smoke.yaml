@@ -1,0 +1,8 @@
+# Pipeline check, not an experiment: every cell, one seed, a few minutes each.
+# snakemake ... --configfile config/smoke.yaml
+seeds: [42]
+total_steps: 2000
+checkpoint_every: 500
+wandb: false
+window_start: 500
+lags: [100, 500, 1000]

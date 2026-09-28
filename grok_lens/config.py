@@ -43,6 +43,10 @@ class GrokModelConfig(BaseModel):
     n_heads: int = 4
     n_layers: int = 2
     mlp_ratio: int = 4
+    # Residual dropout on each block's attention and MLP outputs (GPT-2
+    # style). Off in every published run; a stabilization arm that forces
+    # redundancy without the aux loss.
+    dropout: float = 0.0
 
     @model_validator(mode="after")
     def _validate(self) -> "GrokModelConfig":
@@ -108,7 +112,13 @@ class GrokLensTrainingConfig(BaseTrainingConfig):
     # regularization pressure (load-bearing for grokking) wouldn't be
     # comparable across optimizer arms.
     muon_weight_decay: float = 0.05
-    lr_schedule: Literal["cosine", "constant"] = "constant"
+    lr_schedule: Literal["cosine", "constant", "step"] = "constant"  # pyright: ignore[reportIncompatibleVariableOverride]
+    # "step": constant, then lr * lr_step_factor from lr_step_at on. A
+    # stationary post-grok LR drop (unlike cosine, which keeps moving through
+    # any analysis window). AdamW's decoupled decay scales with lr, so this
+    # lowers weight-decay pressure by the same factor.
+    lr_step_at: int = 20_000
+    lr_step_factor: float = 0.1
     warmup_steps: int = 10
     total_steps: int = 30_000
     # No gradient clipping (inf disables it): the canonical grokking setup
@@ -136,6 +146,8 @@ class GrokLensTrainingConfig(BaseTrainingConfig):
     # for any analysis of how the weights themselves move during training;
     # the per-eval wandb metrics only summarise the embedding.
     checkpoint_every_steps: int = 0
+    # Write a per-eval trace (see grok_lens.trace) to this path at the end.
+    trace_path: str | None = None
 
     # Checkpointing / wandb
     checkpoint_dir: str = "data/grok_lens/checkpoints"

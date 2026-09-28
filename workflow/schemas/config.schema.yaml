@@ -1,0 +1,23 @@
+$schema: "https://json-schema.org/draft/2020-12/schema"
+type: object
+properties:
+  results_dir: {type: string, pattern: "^/"}
+  seeds: {type: array, items: {type: integer}, minItems: 1}
+  total_steps: {type: integer, minimum: 1}
+  checkpoint_every: {type: integer, minimum: 0}
+  wandb: {type: boolean}
+  window_start: {type: integer, minimum: 0}
+  lags: {type: array, items: {type: integer, minimum: 1}, minItems: 1}
+  cells:
+    type: object
+    minProperties: 1
+    additionalProperties:
+      type: object
+      properties:
+        label: {type: string}
+        args: {type: string}
+      required: [label, args]
+  figure_rows:
+    type: array
+    items: {type: array, items: {type: string}, minItems: 1}
+required: [results_dir, seeds, total_steps, checkpoint_every, wandb, window_start, lags, cells, figure_rows]

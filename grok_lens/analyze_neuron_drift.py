@@ -39,13 +39,13 @@ Usage:
 import argparse
 import re
 from pathlib import Path
-from typing import cast
 
 import torch
 
 from grok_lens.config import GrokModelConfig
-from grok_lens.data import train_test_split
-from grok_lens.model import Block, GrokTransformer
+from grok_lens.data import modular_addition_data, train_test_split
+from grok_lens.model import GrokTransformer
+from grok_lens.trace import frequency_profiles, mlp_activations
 
 
 def load(path: Path) -> tuple[GrokTransformer, GrokModelConfig]:
@@ -63,44 +63,14 @@ def load(path: Path) -> tuple[GrokTransformer, GrokModelConfig]:
     return model, cfg
 
 
-def all_pairs(p: int) -> tuple[torch.Tensor, torch.Tensor]:
-    a = torch.arange(p).repeat_interleave(p)
-    b = torch.arange(p).repeat(p)
-    return torch.stack([a, b, torch.full_like(a, p)], dim=1), (a + b) % p
-
-
 @torch.no_grad()
 def neuron_profiles(
-    model: GrokTransformer, p: int, block: int
+    model: GrokTransformer, cfg: GrokModelConfig, block: int
 ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-    """(profile [n, n_freqs], frac_sum [n], variance [n]) for one block's MLP.
-
-    ``profile`` rows are L1-normalised power over frequencies 1..(p-1)/2 of
-    the neuron's activation as a function of (a + b); rows whose activation
-    is constant are left at zero.
-    """
-    tokens, sums = all_pairs(p)
-    acts: dict[int, torch.Tensor] = {}
-    relu = cast("torch.nn.Module", cast("Block", model.blocks[block]).mlp[1])
-    handle = relu.register_forward_hook(
-        lambda _m, _i, out: acts.__setitem__(0, out[:, -1].detach())
-    )
-    model(tokens)
-    handle.remove()
-    act = acts[0]  # [p^2, n_neurons]
-
-    by_sum = torch.zeros(p, act.shape[1])
-    by_sum.index_add_(0, sums, act)
-    by_sum /= p  # mean activation per value of (a + b)
-
-    variance = act.var(0, unbiased=False)
-    frac_sum = (by_sum.var(0, unbiased=False) / variance.clamp_min(1e-12)).clamp(0, 1)
-
-    centred = by_sum - by_sum.mean(0, keepdim=True)
-    n_freqs = (p - 1) // 2
-    spec = torch.fft.rfft(centred, dim=0)[1 : n_freqs + 1].abs().pow(2)  # [K, n]
-    profile = (spec / spec.sum(0).clamp_min(1e-12)).T  # [n, K]
-    return profile, frac_sum, variance
+    """(profile [n, n_freqs], frac_sum [n], variance [n]) for one block's MLP."""
+    tokens, answers = modular_addition_data(cfg.p, cfg.task)
+    _, acts = mlp_activations(model, tokens)
+    return frequency_profiles(acts[block], answers, cfg.p)
 
 
 @torch.no_grad()
@@ -172,7 +142,7 @@ def trace(
     for path in paths:
         model, cfg = load(path)
         layer = block % cfg.n_layers
-        profile, frac_sum, variance = neuron_profiles(model, cfg.p, layer)
+        profile, frac_sum, variance = neuron_profiles(model, cfg, layer)
         steps.append(int(re.findall(r"step_(\d+)", path.name)[0]))
         accs.append(test_accuracy(model, cfg, seed))
         profiles.append(profile)
