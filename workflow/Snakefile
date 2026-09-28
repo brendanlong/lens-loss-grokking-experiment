@@ -1,3 +1,4 @@
+import re
 import shlex
 from pathlib import Path
 
@@ -22,7 +23,7 @@ if unknown:
 
 
 wildcard_constraints:
-    cell="|".join(CELLS),
+    cell="|".join(map(re.escape, CELLS)),
     seed=r"\d+",
 
 
@@ -43,10 +44,7 @@ COMMON_CODE = [
     "grok_lens/trace.py",
 ]
 TRAIN_CODE = COMMON_CODE + ["grok_lens/train.py", "grok_lens/muon.py"]
-ANALYZE_CODE = COMMON_CODE + [
-    "grok_lens/analyze_levels.py",
-    "grok_lens/analyze_neuron_drift.py",
-]
+ANALYZE_CODE = ["grok_lens/__init__.py", "grok_lens/analyze_levels.py"]
 PLOT_CODE = ANALYZE_CODE + ["grok_lens/plot_levels.py"]
 
 

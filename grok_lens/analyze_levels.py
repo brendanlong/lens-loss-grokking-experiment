@@ -1,26 +1,36 @@
 """How much of each level moves over a lag: capability, embedding, neurons.
 
-Reads one ``grok_lens.trace`` file and puts the three levels on one scale,
-"share moved" between evals t and t + lag (0 = identical):
+Reads one ``grok_lens.trace`` file and measures how much each level moves
+between evals t and t + lag (0 = identical):
 
-  - capability: share of test examples whose correctness differs.
+  - capability: share of test answers whose correctness differs. A literal
+    share, not chance-corrected: it measures the function, and a model right
+    on 99.9% of examples at both ends has changed at most 0.2% of its
+    answers however much its internals moved. That bound is the claim.
   - embedding: total-variation distance between the embedding's
-    per-frequency power shares — the share of power sitting on different
-    frequencies.
+    per-frequency power shares, divided by its expectation if frequency
+    identity were shuffled (``embedding_raw`` keeps the undivided share of
+    power sitting on different frequencies).
   - neurons: 1 - chance-corrected retention of each frequency's neuron
     population (see ``analyze_neuron_drift.retention_lift``), averaged over
-    frequencies; 1 = no more overlap than if neuron identity were shuffled.
-    Neurons of every block are pooled, so a role handed from one block's
-    neurons to another's counts as turnover. Per-block curves are reported
-    too.
+    frequencies. Neurons of every block are pooled, so a role handed from one
+    block's neurons to another's counts as turnover. Per-block curves are
+    reported too.
+
+Embedding and neurons therefore share a scale — 1 = no more alike than with
+identities shuffled — and can be compared directly; capability is on its own
+literal scale.
 
 Two uses of the same measurement:
 
-  - lag curves over a post-grok window.
+  - lag curves over a post-grok window (from ``window_start`` or first
+    grok, whichever is later; none for runs that never grok).
   - repair events: for each collapse (test acc falls below ``DIP`` after
     first grok), the state just before it against the state at recovery,
-    alongside the same measurement over equally long collapse-free spans.
-    "Repairs itself onto the same circuit" predicts event ≈ control.
+    alongside the same measurement over equally long collapse-free spans
+    starting within ``CONTROL_RADIUS`` steps of it (so an early collapse is
+    not compared with late, quieter training). "Repairs itself onto the same
+    circuit" predicts event ≈ control.
 
 Usage:
     uv run python -m grok_lens.analyze_levels TRACE --out summary.json
@@ -35,6 +45,8 @@ import torch
 GROK = 0.95  # first-grok / "working" threshold (matches train.py)
 DIP = 0.90  # below this after first grok counts as a collapse
 LEVELS = ("capability", "embedding", "neurons")
+CONTROL_RADIUS = 5_000
+N_SHUFFLES = 64
 Pairs = tuple[torch.Tensor, torch.Tensor]
 
 
@@ -70,10 +82,18 @@ def capability_moved(correct: torch.Tensor, pairs: Pairs) -> float:
     return (correct[i] != correct[j]).float().mean().item()
 
 
-def embedding_moved(power: torch.Tensor, pairs: Pairs) -> float:
+def embedding_moved(power: torch.Tensor, pairs: Pairs) -> tuple[float, float]:
+    """(TV distance / its frequency-shuffled expectation, raw TV distance)."""
     shares = power / power.sum(-1, keepdim=True)
     i, j = pairs
-    return (0.5 * (shares[i] - shares[j]).abs().sum(-1)).mean().item()
+    tv = (0.5 * (shares[i] - shares[j]).abs().sum(-1)).mean()
+    gen = torch.Generator().manual_seed(0)
+    perms = torch.stack(
+        [torch.randperm(shares.shape[-1], generator=gen) for _ in range(N_SHUFFLES)]
+    )
+    shuffled = shares[j][:, perms]  # [P, S, K]
+    chance = (0.5 * (shares[i][:, None] - shuffled).abs().sum(-1)).mean()
+    return (tv / chance).item(), tv.item()
 
 
 def neuron_retention(
@@ -134,10 +154,14 @@ def collapse_events(acc: torch.Tensor) -> list[tuple[int, int, int | None]]:
     return events
 
 
-def collapse_free_pairs(acc: torch.Tensor, lag: int, start: int) -> Pairs:
-    """(t, t + lag) spans after ``start`` that never drop below DIP."""
+def collapse_free_pairs(
+    acc: torch.Tensor, lag: int, start: int, stop: int | None = None
+) -> Pairs:
+    """(t, t + lag) spans, start <= t < stop, that never drop below DIP."""
     ok = acc >= DIP
     i, j = lag_pairs(len(acc), lag, start)
+    if stop is not None:
+        i, j = i[i < stop], j[i < stop]
     if not len(i):
         return i, j
     clean_prefix = torch.cat([torch.zeros(1), (~ok).float().cumsum(0)])
@@ -154,12 +178,15 @@ def levels_moved(
     min_pop: int,
 ) -> dict[str, float | None]:
     if not len(pairs[0]):
-        return dict.fromkeys(LEVELS)
+        return {**dict.fromkeys(LEVELS), "n_pairs": 0}
     retention = neuron_retention(*roles, pairs, min_pop)
+    embedding, embedding_raw = embedding_moved(trace["embed_power"], pairs)
     return {
         "capability": capability_moved(trace["test_correct"], pairs),
-        "embedding": embedding_moved(trace["embed_power"], pairs),
+        "embedding": embedding,
+        "embedding_raw": embedding_raw,
         "neurons": None if retention is None else 1 - retention,
+        "n_pairs": len(pairs[0]),
     }
 
 
@@ -182,7 +209,7 @@ def summarize(
     ]
 
     grok = first_grok(acc)
-    win = int((steps < window_start).sum())
+    win = max(int((steps < window_start).sum()), grok if grok is not None else 0)
     post = acc[grok:] if grok is not None else acc[:0]
 
     curves: dict[str, list[dict[str, float | None]]] = {"pooled": []}
@@ -190,7 +217,7 @@ def summarize(
         curves[f"block{b}"] = []
     for lag_steps in lags:
         lag = lag_steps // cadence
-        if lag < 1 or win + lag >= len(steps):
+        if grok is None or lag < 1 or win + lag >= len(steps):
             continue
         pairs = lag_pairs(len(steps), lag, win)
         curves["pooled"].append(
@@ -216,17 +243,22 @@ def summarize(
         if rec is not None and grok is not None:
             span = (torch.tensor([pre]), torch.tensor([rec]))
             event["moved"] = levels_moved(trace, pooled, span, min_pop)
+            radius = CONTROL_RADIUS // cadence
+            control = collapse_free_pairs(
+                acc, rec - pre, max(grok, pre - radius), pre + radius + 1
+            )
             event["collapse_free_control"] = levels_moved(
-                trace, pooled, collapse_free_pairs(acc, rec - pre, grok), min_pop
+                trace, pooled, control, min_pop
             )
         events.append(event)
 
     return {
         "run_name": trace["meta"]["run_name"],  # type: ignore[index]
         "last_step": int(steps[-1]),
-        "window_start": window_start,
+        "window_start": int(steps[min(win, len(steps) - 1)]),
         "first_grok": None if grok is None else int(steps[grok]),
-        "dips": int((post < DIP).sum()),
+        "collapses": len(events),
+        "evals_below_dip": int((post < DIP).sum()),
         "occupancy": (post >= GROK).float().mean().item() if len(post) else None,
         "window_acc_min": acc[win:].min().item(),
         "window_loss_mean": loss[win:].mean().item(),

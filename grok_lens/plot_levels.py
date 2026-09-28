@@ -21,13 +21,13 @@ from matplotlib.axes import Axes
 from matplotlib.colors import LinearSegmentedColormap
 from matplotlib.lines import Line2D
 
-from grok_lens.analyze_levels import LEVELS, load_trace, neuron_roles
+from grok_lens.analyze_levels import CONTROL_RADIUS, LEVELS, load_trace, neuron_roles
 
 LEVEL_COLORS = {"capability": "#2a78d6", "embedding": "#eb6834", "neurons": "#1baf7a"}
 LEVEL_NAMES = {
-    "capability": "capability (test answers)",
-    "embedding": "embedding frequencies",
-    "neurons": "neurons per frequency",
+    "capability": "test answers changed (share)",
+    "embedding": "embedding frequencies (1 = shuffled)",
+    "neurons": "neurons per frequency (1 = shuffled)",
 }
 INK, MUTED, GRID = "#333333", "#666666", "#e6e6e6"
 # <cell>/s<seed>.json (summaries) or <cell>/s<seed>/trace.pt (runs)
@@ -105,9 +105,9 @@ def plot_lag_curves(
             ha="right", va="top", fontsize=7, color=MUTED,
         )  # fmt: skip
         ax.set_xscale("log")
-        ax.set_ylim(-0.05, 1.1)
+        ax.set_ylim(-0.05, max(1.1, ax.get_ylim()[1]))
     first = axes[rows[0][0]]
-    first.set_ylabel("share moved", fontsize=8, color=MUTED)
+    first.set_ylabel("moved (0 = unchanged)", fontsize=8, color=MUTED)
     for row in rows:
         axes[row[-1]].set_xlabel("lag (steps)", fontsize=8, color=MUTED)
     handles = [
@@ -226,14 +226,28 @@ def plot_repairs(
                     xs, ys, s=14, marker=markers[i % len(markers)], facecolor="none",
                     edgecolor=LEVEL_COLORS[level], lw=0.8, label=labels.get(cell, cell),
                 )  # fmt: skip
-        ax.plot([0, 1], [0, 1], color=MUTED, lw=0.6, ls=":")
-        ax.set_xlim(-0.02, 1.02)
-        ax.set_ylim(-0.02, 1.02)
+        ax.plot([0, 1.5], [0, 1.5], color=MUTED, lw=0.6, ls=":")
+        ax.set_xlim(-0.02, 1.5)
+        ax.set_ylim(-0.02, 1.5)
         ax.set_xlabel("collapse-free span of equal length", fontsize=7.5, color=MUTED)
     axes[0].set_ylabel("before collapse → after recovery", fontsize=7.5, color=MUTED)
+    events = [e for by_seed in summaries.values() for s in by_seed.values()
+              for e in s["events"]]  # fmt: skip
+    unmatched = sum(
+        1 for e in events
+        if "moved" in e and not e["collapse_free_control"]["n_pairs"]
+    )  # fmt: skip
+    unrecovered = sum(1 for e in events if e["recovery_step"] is None)
+    fig.text(
+        0.01, 0.01,
+        f"{len(events)} collapses; not shown: {unmatched} with no collapse-free "
+        f"span of equal length within ±{CONTROL_RADIUS} steps, "
+        f"{unrecovered} unrecovered by the end",
+        fontsize=7, color=MUTED,
+    )  # fmt: skip
     if cells:
         axes[0].legend(fontsize=6.5, frameon=False, loc="upper left")
-    fig.tight_layout()
+    fig.tight_layout(rect=(0, 0.04, 1, 1))
     fig.savefig(out, dpi=160)
     plt.close(fig)
 

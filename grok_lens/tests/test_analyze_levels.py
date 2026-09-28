@@ -42,8 +42,16 @@ def test_identical_populations_retain_fully() -> None:
 
 def test_embedding_moved_is_share_of_power_relocated() -> None:
     power = torch.tensor([[1.0, 0.0, 0.0], [0.0, 2.0, 0.0], [3.0, 0.0, 0.0]])
-    assert embedding_moved(power, lag_pairs(3, 1)) == pytest.approx(1.0)
-    assert embedding_moved(power, lag_pairs(3, 2)) == pytest.approx(0.0)
+    assert embedding_moved(power, lag_pairs(3, 1))[1] == pytest.approx(1.0)
+    assert embedding_moved(power, lag_pairs(3, 2)) == pytest.approx((0.0, 0.0))
+
+
+def test_embedding_moved_is_about_one_for_an_unrelated_spectrum() -> None:
+    gen = torch.Generator().manual_seed(1)
+    power = torch.rand(2, 56, generator=gen) ** 8
+    power[1] = power[1, torch.randperm(56, generator=gen)]
+    corrected, _ = embedding_moved(power, lag_pairs(2, 1))
+    assert 0.7 < corrected < 1.3
 
 
 def test_collapse_events_find_pre_trough_and_recovery() -> None:
@@ -55,6 +63,8 @@ def test_collapse_free_pairs_skip_spans_containing_a_dip() -> None:
     acc = torch.tensor([0.1, 0.96, 0.99, 0.5, 0.97, 0.98, 0.99])
     i, j = collapse_free_pairs(acc, lag=1, start=1)
     assert list(zip(i.tolist(), j.tolist(), strict=True)) == [(1, 2), (4, 5), (5, 6)]
+    i, j = collapse_free_pairs(acc, lag=1, start=1, stop=5)
+    assert list(zip(i.tolist(), j.tolist(), strict=True)) == [(1, 2), (4, 5)]
 
 
 def test_frequency_profiles_recover_planted_frequency_per_block() -> None:
