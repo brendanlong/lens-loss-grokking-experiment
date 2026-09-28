@@ -4,11 +4,18 @@ At every eval, on all p^2 pairs:
 
   - capability: per-example test loss and correctness
   - embedding: per-frequency Fourier power of the number-token embeddings
-  - MLP neurons, every block: each neuron's frequency profile (power spectrum
-    of its answer-position activation as a function of the answer), the share
-    of its variance that is a function of the answer at all, and its variance
+  - MLP neurons, every block, from their answer-position activations:
+    ``profile``, the frequency profile over the 2-D Fourier spectrum in
+    (a, b); ``answer_profile``, the profile of the activation as a function
+    of the answer alone (the published neuron-drift measure); the share of
+    variance that is a function of the answer; and the variance.
 
-Full checkpoints are too big to keep at eval cadence; this is ~60 MB for a
+The two profiles differ where it matters: a 1-layer model's neurons are
+~95% one frequency in (a, b) but only ~20% a function of the answer (they
+also respond to a and b separately), so the answer-only profile misses the
+circuit there.
+
+Full checkpoints are too big to keep at eval cadence; this is ~120 MB for a
 50k-step 2-layer run and is what ``grok_lens.analyze_levels`` reads.
 """
 
@@ -68,6 +75,24 @@ def frequency_profiles(
     return profile, frac, variance
 
 
+def pair_frequency_profiles(acts: torch.Tensor, p: int) -> torch.Tensor:
+    """Profile [..., n, K] from the 2-D Fourier spectrum over (a, b).
+
+    ``acts`` is [..., p^2, n] in :func:`modular_addition_data` order (a
+    major). Frequency k's power is every component (k1, k2) with k1 or k2
+    equal to ±k: a-only, b-only and joint terms alike. A component mixing
+    two different frequencies counts towards both. Rows are L1-normalised.
+    """
+    grid = acts.reshape(*acts.shape[:-2], p, p, acts.shape[-1])
+    spec = torch.fft.fft2(grid, dim=(-3, -2)).abs().pow(2).flatten(-3, -2)
+    idx = torch.arange(p, device=acts.device)
+    fold = torch.minimum(idx, p - idx)
+    ks = torch.arange(1, (p - 1) // 2 + 1, device=acts.device)
+    involves = (fold[:, None, None] == ks) | (fold[None, :, None] == ks)
+    power = torch.einsum("...fn,fk->...nk", spec, involves.flatten(0, 1).float())
+    return power / power.sum(-1, keepdim=True).clamp_min(1e-12)
+
+
 class TraceRecorder:
     def __init__(
         self, model_config: GrokModelConfig, train_frac: float, seed: int
@@ -88,16 +113,17 @@ class TraceRecorder:
 
         logits, acts = mlp_activations(model, tokens)
         test_logits, test_answers = logits[test_idx], answers[test_idx]
-        profile, frac, variance = frequency_profiles(acts, answers, self.p)
+        answer_profile, frac, variance = frequency_profiles(acts, answers, self.p)
         row = {
-            "test_loss": F.cross_entropy(test_logits, test_answers, reduction="none")
-            .half()
-            .cpu(),
+            "test_loss": F.cross_entropy(
+                test_logits, test_answers, reduction="none"
+            ).cpu(),
             "test_correct": (test_logits.argmax(-1) == test_answers).cpu(),
             "embed_power": fourier_power(
                 model.embed.weight[: self.p].float().cpu(), self.p
             ),
-            "profile": profile.half().cpu(),
+            "profile": pair_frequency_profiles(acts, self.p).half().cpu(),
+            "answer_profile": answer_profile.half().cpu(),
             "frac_answer": frac.half().cpu(),
             "variance": variance.cpu(),
         }

@@ -11,7 +11,7 @@ from grok_lens.analyze_levels import (
     neuron_retention,
 )
 from grok_lens.analyze_neuron_drift import populations, retention_lift
-from grok_lens.trace import frequency_profiles
+from grok_lens.trace import frequency_profiles, pair_frequency_profiles
 
 
 def test_vectorised_retention_matches_retention_lift() -> None:
@@ -77,3 +77,18 @@ def test_frequency_profiles_recover_planted_frequency_per_block() -> None:
     profile, frac, _ = frequency_profiles(acts, answers, p)
     assert profile.argmax(-1).tolist() == [[2, 6], [6, 2]]
     assert frac.min().item() == pytest.approx(1.0)
+
+
+def test_pair_profiles_see_frequency_in_a_and_b_not_just_the_sum() -> None:
+    p, k = 23, 5
+    a = torch.arange(p).repeat_interleave(p).float()
+    b = torch.arange(p).repeat(p).float()
+    w = 2 * math.pi * k / p
+    separate = torch.cos(w * a) + torch.cos(w * b)
+    joint = torch.cos(w * (a + b))
+    acts = torch.stack([separate, joint], -1)[None]  # [1, p^2, 2]
+    profile = pair_frequency_profiles(acts, p)
+    assert profile[0, :, k - 1].tolist() == pytest.approx([1.0, 1.0])
+    answers = ((a + b) % p).long()
+    _, frac, _ = frequency_profiles(acts, answers, p)
+    assert frac[0, 0].item() == pytest.approx(0.0, abs=1e-6)

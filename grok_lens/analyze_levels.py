@@ -13,9 +13,11 @@ between evals t and t + lag (0 = identical):
     power sitting on different frequencies).
   - neurons: 1 - chance-corrected retention of each frequency's neuron
     population (see ``analyze_neuron_drift.retention_lift``), averaged over
-    frequencies. Neurons of every block are pooled, so a role handed from one
-    block's neurons to another's counts as turnover. Per-block curves are
-    reported too.
+    frequencies. A neuron serves frequency k if k holds at least
+    ``member_share`` of its 2-D (a, b) spectrum (``trace.pair_frequency_
+    profiles``); spread-out noise neurons serve nothing. Neurons of every
+    block are pooled, so a role handed from one block's neurons to another's
+    counts as turnover. Per-block curves are reported too.
 
 Embedding and neurons therefore share a scale — 1 = no more alike than with
 identities shuffled — and can be compared directly; capability is on its own
@@ -57,22 +59,18 @@ def load_trace(path: Path) -> dict[str, torch.Tensor]:
 def neuron_roles(
     trace: dict[str, torch.Tensor],
     member_share: float,
-    min_frac_answer: float,
     blocks: list[int] | None = None,
 ) -> tuple[torch.Tensor, torch.Tensor]:
     """(member [T, N, K], active [T, N]) with the chosen blocks' neurons pooled.
 
-    Active: at least ``min_frac_answer`` of the neuron's variance is a
-    function of the answer, and it is not dead (variance above 1e-3 of its
-    block's largest at that eval).
+    Active: not dead (variance above 1e-3 of its block's largest at that
+    eval).
     """
     profile = trace["profile"].float()  # [T, L, n, K]
-    frac = trace["frac_answer"].float()
     var = trace["variance"]
     if blocks is not None:
-        profile, frac, var = profile[:, blocks], frac[:, blocks], var[:, blocks]
-    alive = var > var.amax(-1, keepdim=True) * 1e-3
-    active = (frac >= min_frac_answer) & alive
+        profile, var = profile[:, blocks], var[:, blocks]
+    active = var > var.amax(-1, keepdim=True) * 1e-3
     member = (profile >= member_share) & active[..., None]
     return member.flatten(1, 2), active.flatten(1, 2)
 
@@ -195,7 +193,6 @@ def summarize(
     window_start: int,
     lags: list[int],
     member_share: float,
-    min_frac_answer: float,
     min_pop: int,
 ) -> dict[str, object]:
     steps = trace["steps"]
@@ -203,10 +200,8 @@ def summarize(
     loss = trace["test_loss"].float().mean(1)
     cadence = int(steps[1] - steps[0])
     n_blocks = trace["profile"].shape[1]
-    pooled = neuron_roles(trace, member_share, min_frac_answer)
-    per_block = [
-        neuron_roles(trace, member_share, min_frac_answer, [b]) for b in range(n_blocks)
-    ]
+    pooled = neuron_roles(trace, member_share)
+    per_block = [neuron_roles(trace, member_share, [b]) for b in range(n_blocks)]
 
     grok = first_grok(acc)
     win = max(int((steps < window_start).sum()), grok if grok is not None else 0)
@@ -262,7 +257,9 @@ def summarize(
         "occupancy": (post >= GROK).float().mean().item() if len(post) else None,
         "window_acc_min": acc[win:].min().item(),
         "window_loss_mean": loss[win:].mean().item(),
-        "active_neurons_per_block_at_end": [int(r[1][-1].sum()) for r in per_block],
+        "role_neurons_per_block_at_end": [
+            int(r[0][-1].any(-1).sum()) for r in per_block
+        ],
         "curves": curves,
         "events": events,
     }
@@ -280,7 +277,6 @@ def main() -> None:
         default=[100, 200, 500, 1000, 2000, 5000, 10_000, 15_000, 19_900],
     )
     parser.add_argument("--member-share", type=float, default=0.10)
-    parser.add_argument("--min-frac-answer", type=float, default=0.5)
     parser.add_argument("--min-population", type=int, default=5)
     args = parser.parse_args()
 
@@ -289,7 +285,6 @@ def main() -> None:
         args.window_start,
         args.lags,
         args.member_share,
-        args.min_frac_answer,
         args.min_population,
     )
     args.out.parent.mkdir(parents=True, exist_ok=True)

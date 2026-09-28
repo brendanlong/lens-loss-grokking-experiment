@@ -181,7 +181,7 @@ def plot_run_detail(trace_path: Path, title: str, window_start: int, out: Path) 
     axes[1].set_yticks(range(len(keep)), [str(int(k) + 1) for k in keep], fontsize=6)
     axes[1].set_ylabel("embedding frequency\n(power share)", fontsize=8, color=MUTED)
 
-    member, _ = neuron_roles(trace, member_share=0.10, min_frac_answer=0.5)
+    member, _ = neuron_roles(trace, member_share=0.10)
     in_window = steps >= window_start
     sizes = member[in_window].sum(1).float().min(0).values  # [K]
     role = int(sizes.argmax())
