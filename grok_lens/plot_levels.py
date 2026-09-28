@@ -101,8 +101,8 @@ def plot_lag_curves(
                 ax.plot(xs, ys, color=color, lw=2, marker="o", ms=3.5, label=level)
         n = len(by_seed)
         ax.text(
-            0.98, 0.04, f"{n} seed{'s' * (n != 1)}", transform=ax.transAxes,
-            ha="right", fontsize=7, color=MUTED,
+            0.98, 0.96, f"{n} seed{"s" * (n != 1)}", transform=ax.transAxes,
+            ha="right", va="top", fontsize=7, color=MUTED,
         )  # fmt: skip
         ax.set_xscale("log")
         ax.set_ylim(-0.05, 1.1)
@@ -147,6 +147,18 @@ def plot_test_loss(
     plt.close(fig)
 
 
+def heatmap(ax: Axes, steps: torch.Tensor, rows: torch.Tensor, color: str) -> None:
+    """``rows`` [R, T] as a white-to-``color`` heatmap over steps."""
+    ax.grid(False)
+    if not len(rows):
+        ax.text(0.5, 0.5, "nothing above threshold", transform=ax.transAxes,
+                ha="center", va="center", fontsize=8, color=MUTED)  # fmt: skip
+        return
+    cmap = LinearSegmentedColormap.from_list(color, ["#ffffff", color])
+    ax.pcolormesh(steps, torch.arange(len(rows)), rows, cmap=cmap,
+                  shading="nearest", rasterized=True)  # fmt: skip
+
+
 def plot_run_detail(trace_path: Path, title: str, window_start: int, out: Path) -> None:
     """Test loss, embedding spectrum and one role's neuron raster, one run."""
     trace = load_trace(trace_path)
@@ -165,14 +177,9 @@ def plot_run_detail(trace_path: Path, title: str, window_start: int, out: Path) 
     power = trace["embed_power"]
     shares = power / power.sum(-1, keepdim=True)
     keep = (shares[steps >= window_start].amax(0) >= 0.02).nonzero().flatten()
-    seq = LinearSegmentedColormap.from_list("seq", ["#ffffff", "#eb6834"])
-    axes[1].pcolormesh(
-        steps, torch.arange(len(keep)), shares[:, keep].T, cmap=seq,
-        shading="nearest", rasterized=True,
-    )  # fmt: skip
+    heatmap(axes[1], steps, shares[:, keep].T, LEVEL_COLORS["embedding"])
     axes[1].set_yticks(range(len(keep)), [str(int(k) + 1) for k in keep], fontsize=6)
     axes[1].set_ylabel("embedding frequency\n(power share)", fontsize=8, color=MUTED)
-    axes[1].grid(False)
 
     member, _ = neuron_roles(trace, member_share=0.10, min_frac_answer=0.5)
     in_window = steps >= window_start
@@ -181,13 +188,8 @@ def plot_run_detail(trace_path: Path, title: str, window_start: int, out: Path) 
     rows = member[:, :, role]  # [T, N]
     ever = rows[in_window].any(0).nonzero().flatten()
     order = ever[rows[:, ever].float().argmax(0).argsort()]  # by first join
-    raster = LinearSegmentedColormap.from_list("raster", ["#ffffff", "#1baf7a"])
-    axes[2].pcolormesh(
-        steps, torch.arange(len(order)), rows[:, order].T.float(), cmap=raster,
-        shading="nearest", rasterized=True,
-    )  # fmt: skip
+    heatmap(axes[2], steps, rows[:, order].T.float(), LEVEL_COLORS["neurons"])
     axes[2].set_ylabel(f"neurons serving freq {role + 1}", fontsize=8, color=MUTED)
-    axes[2].grid(False)
     axes[2].set_xlabel("step", fontsize=8, color=MUTED)
     for ax in axes:
         ax.axvline(window_start, color=MUTED, lw=0.6, ls=":")
