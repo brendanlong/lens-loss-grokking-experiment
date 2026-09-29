@@ -48,6 +48,7 @@ GROK = 0.95  # first-grok / "working" threshold (matches train.py)
 DIP = 0.90  # below this after first grok counts as a collapse
 LEVELS = ("capability", "embedding", "neurons")
 CONTROL_RADIUS = 5_000
+TAIL = 10_000  # "where the run ended": the last TAIL steps
 N_SHUFFLES = 64
 Pairs = tuple[torch.Tensor, torch.Tensor]
 
@@ -204,6 +205,7 @@ def summarize(
     per_block = [neuron_roles(trace, member_share, [b]) for b in range(n_blocks)]
 
     grok = first_grok(acc)
+    tail = steps > steps[-1] - TAIL
     win = max(int((steps < window_start).sum()), grok if grok is not None else 0)
     post = acc[grok:] if grok is not None else acc[:0]
 
@@ -256,6 +258,15 @@ def summarize(
         "evals_below_dip": int((post < DIP).sum()),
         "occupancy": (post >= GROK).float().mean().item() if len(post) else None,
         "window_acc_min": acc[win:].min().item(),
+        "tail": {
+            "start": int(steps[-1]) - TAIL,
+            "occupancy": (acc[tail] >= GROK).float().mean().item(),
+            "min_acc": acc[tail].min().item(),
+            "collapses": sum(
+                1 for e in events if e["trough_step"] > int(steps[-1]) - TAIL
+            ),
+            "final_acc": acc[-1].item(),
+        },
         "window_loss_mean": loss[win:].mean().item(),
         "role_neurons_per_block_at_end": [
             int(r[0][-1].any(-1).sum()) for r in per_block

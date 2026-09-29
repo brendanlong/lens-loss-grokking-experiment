@@ -14,14 +14,28 @@ validate(config, "schemas/config.schema.yaml")
 
 RESULTS = Path(config["results_dir"])
 CELLS = list(config["cells"])
-SEEDS = config["seeds"]
+RUNS = [
+    (cell, seed)
+    for cell, spec in config["cells"].items()
+    for seed in config["seeds"] + spec.get("extra_seeds", [])
+]
 
 
 def window_start(cell):
     return config["cells"][cell].get("window_start", config["window_start"])
 
 
-FIGURES = ["levels_by_lag", "test_loss", "repairs", *(f"detail_{c}" for c in CELLS)]
+def per_run(pattern):
+    return [str(pattern).format(cell=c, seed=s) for c, s in RUNS]
+
+
+FIGURES = [
+    "levels_by_lag.png",
+    "test_loss.png",
+    "repairs.png",
+    "tail_stability.md",
+    *(f"detail_{c}.png" for c in CELLS),
+]
 
 unknown = {c for row in config["figure_rows"] for c in row} - set(CELLS)
 if unknown:

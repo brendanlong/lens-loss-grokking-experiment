@@ -17,11 +17,11 @@ rule analyze:
 
 rule figures:
     input:
-        summaries=expand(rules.analyze.output[0], cell=CELLS, seed=SEEDS),
-        traces=expand(rules.train.output.trace, cell=CELLS, seed=SEEDS),
+        summaries=per_run(rules.analyze.output[0]),
+        traces=per_run(rules.train.output.trace),
         code=PLOT_CODE,
     output:
-        expand(RESULTS / "figures/{name}.png", name=FIGURES),
+        expand(RESULTS / "figures/{name}", name=FIGURES),
     log:
         RESULTS / "logs/figures.log",
     params:

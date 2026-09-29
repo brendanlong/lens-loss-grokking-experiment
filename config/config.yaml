@@ -21,6 +21,8 @@ cells:
   L2-ln:
     label: 2 layers, LayerNorm
     args: --n-layers 2
+    # does annealing reliably end stable, or do some seeds calm down anyway?
+    extra_seeds: [45, 46, 47, 48, 49, 50, 51]
   L2-ln-aux:
     label: 2 layers, LayerNorm, aux loss
     args: --n-layers 2 --aux-lambda 0.3
@@ -44,6 +46,7 @@ cells:
     args: --n-layers 2 --lr-schedule wsd --lr-decay-start 20000 --lr-decay-end 40000 --lr-decay-floor 0.1
     # lag curves only over the flat tail, not the moving LR
     window_start: 40000
+    extra_seeds: [45, 46, 47, 48, 49, 50, 51]
 
 # Panel layout for the grid figures (rows of cell names).
 figure_rows:

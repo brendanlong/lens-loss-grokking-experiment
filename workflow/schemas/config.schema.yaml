@@ -17,6 +17,7 @@ properties:
         label: {type: string}
         args: {type: string}
         window_start: {type: integer, minimum: 0}
+        extra_seeds: {type: array, items: {type: integer}}
       required: [label, args]
   figure_rows:
     type: array

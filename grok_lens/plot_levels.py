@@ -252,6 +252,34 @@ def plot_repairs(
     plt.close(fig)
 
 
+def write_tail_table(
+    summaries: dict[str, dict[int, dict]],
+    rows: list[list[str]],
+    labels: dict[str, str],
+    out: Path,
+) -> None:
+    """Per cell: how often each seed is working over the last TAIL steps."""
+    lines = [
+        "| cell | seeds | tail evals >= 0.95 (mean; per seed) "
+        "| seeds with a tail collapse | worst tail acc | final acc < 0.95 |",
+        "|---|---|---|---|---|---|",
+    ]
+    for cell in (c for row in rows for c in row):
+        tails = [s["tail"] for _, s in sorted(summaries.get(cell, {}).items())]
+        if not tails:
+            continue
+        occ = [t["occupancy"] for t in tails]
+        per_seed = " ".join(f"{o:.2f}" for o in occ)
+        lines.append(
+            f"| {labels.get(cell, cell)} | {len(tails)} "
+            f"| {sum(occ) / len(occ):.2f}; {per_seed} "
+            f"| {sum(t['collapses'] > 0 for t in tails)} "
+            f"| {min(t['min_acc'] for t in tails):.2f} "
+            f"| {sum(t['final_acc'] < 0.95 for t in tails)} |"
+        )
+    out.write_text("\n".join(lines) + "\n")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--out", type=Path, required=True)
@@ -281,6 +309,7 @@ def main() -> None:
     plot_lag_curves(summaries, rows, labels, args.out / "levels_by_lag.png")
     plot_test_loss(traces, rows, labels, windows, args.out / "test_loss.png")
     plot_repairs(summaries, labels, args.out / "repairs.png")
+    write_tail_table(summaries, rows, labels, args.out / "tail_stability.md")
     for cell, by_seed in traces.items():
         seed = args.detail_seed if args.detail_seed in by_seed else min(by_seed)
         plot_run_detail(
