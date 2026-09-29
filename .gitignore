@@ -218,3 +218,7 @@ __marimo__/
 # Project data (cached models, datasets)
 data/
 wandb/
+
+# Snakemake
+.snakemake/
+results/

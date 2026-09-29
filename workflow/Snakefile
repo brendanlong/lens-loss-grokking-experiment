@@ -1,0 +1,77 @@
+import re
+import shlex
+from pathlib import Path
+
+from snakemake.utils import validate
+
+
+configfile: "config/config.yaml"
+
+
+if "results_dir" not in config:
+    raise ValueError("pass --config results_dir=/absolute/path (see config.yaml)")
+validate(config, "schemas/config.schema.yaml")
+
+RESULTS = Path(config["results_dir"])
+CELLS = list(config["cells"])
+RUNS = [
+    (cell, seed)
+    for cell, spec in config["cells"].items()
+    for seed in config["seeds"] + spec.get("extra_seeds", [])
+]
+
+
+def window_start(cell):
+    return config["cells"][cell].get("window_start", config["window_start"])
+
+
+def per_run(pattern):
+    return [str(pattern).format(cell=c, seed=s) for c, s in RUNS]
+
+
+FIGURES = [
+    "levels_by_lag.png",
+    "test_loss.png",
+    "repairs.png",
+    "tail_stability.md",
+    *(f"detail_{c}.png" for c in CELLS),
+]
+
+unknown = {c for row in config["figure_rows"] for c in row} - set(CELLS)
+if unknown:
+    raise ValueError(f"figure_rows names cells not in cells: {sorted(unknown)}")
+
+
+wildcard_constraints:
+    cell="|".join(map(re.escape, CELLS)),
+    seed=r"\d+",
+
+
+# Snakemake reruns a job when an input's content changes, so the modules a
+# step imports are listed as inputs: editing them reruns exactly the steps
+# they affect.
+COMMON_CODE = [
+    "common/__init__.py",
+    "common/checkpoint.py",
+    "common/config.py",
+    "common/schedule.py",
+    "common/wandb_utils.py",
+    "grok_lens/__init__.py",
+    "grok_lens/analyze_fourier.py",
+    "grok_lens/config.py",
+    "grok_lens/data.py",
+    "grok_lens/model.py",
+    "grok_lens/trace.py",
+]
+TRAIN_CODE = COMMON_CODE + ["grok_lens/train.py", "grok_lens/muon.py"]
+ANALYZE_CODE = ["grok_lens/__init__.py", "grok_lens/analyze_levels.py"]
+PLOT_CODE = ANALYZE_CODE + ["grok_lens/plot_levels.py"]
+
+
+include: "rules/train.smk"
+include: "rules/analyze.smk"
+
+
+rule all:
+    input:
+        rules.figures.output,

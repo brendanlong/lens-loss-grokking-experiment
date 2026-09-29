@@ -25,19 +25,26 @@ def modular_addition_data(
     return tokens, targets
 
 
+def split_indices(
+    p: int, train_frac: float, seed: int
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """(train_idx, test_idx) into :func:`modular_addition_data`'s pair order.
+
+    A seeded permutation of the exhaustive pair list is split at
+    ``round(train_frac * p^2)``; the two halves partition the full dataset.
+    """
+    generator = torch.Generator().manual_seed(seed)
+    perm = torch.randperm(p * p, generator=generator)
+    n_train = round(train_frac * p * p)
+    return perm[:n_train], perm[n_train:]
+
+
 def train_test_split(
     model_config: GrokModelConfig,
     train_frac: float,
     seed: int,
 ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
-    """Return (train_tokens, train_targets, test_tokens, test_targets).
-
-    A seeded permutation of the exhaustive pair list is split at
-    ``round(train_frac * p^2)``; the two halves partition the full dataset.
-    """
+    """Return (train_tokens, train_targets, test_tokens, test_targets)."""
     tokens, targets = modular_addition_data(model_config.p, model_config.task)
-    generator = torch.Generator().manual_seed(seed)
-    perm = torch.randperm(len(targets), generator=generator)
-    n_train = round(train_frac * len(targets))
-    train_idx, test_idx = perm[:n_train], perm[n_train:]
+    train_idx, test_idx = split_indices(model_config.p, train_frac, seed)
     return tokens[train_idx], targets[train_idx], tokens[test_idx], targets[test_idx]

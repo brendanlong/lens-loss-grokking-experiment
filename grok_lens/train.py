@@ -36,18 +36,25 @@ from grok_lens.model import (
     intermediate_layer_weights,
 )
 from grok_lens.muon import split_muon_params
+from grok_lens.trace import TraceRecorder
 
 EXPERIMENT = "grok_lens"
 
 
 def build_lr_lambda(config: GrokLensTrainingConfig) -> Callable[[int], float]:
-    """Linear warmup then constant or cosine decay, as a LambdaLR multiplier."""
+    """Linear warmup then constant, step or cosine decay, as a LambdaLR multiplier."""
 
     def lr_lambda(step: int) -> float:
         if step < config.warmup_steps:
             return (step + 1) / config.warmup_steps
         if config.lr_schedule == "constant":
             return 1.0
+        if config.lr_schedule == "step":
+            return config.lr_step_factor if step >= config.lr_step_at else 1.0
+        if config.lr_schedule == "wsd":
+            span = max(1, config.lr_decay_end - config.lr_decay_start)
+            done = min(max(step - config.lr_decay_start, 0) / span, 1.0)
+            return 1.0 - done * (1.0 - config.lr_decay_floor)
         progress = (step - config.warmup_steps) / max(
             1, config.total_steps - config.warmup_steps
         )
@@ -136,6 +143,11 @@ def train_grok_model(
     if config.compile and device.type == "cuda":
         train_step = torch.compile(model)  # type: ignore[assignment]
 
+    recorder = (
+        TraceRecorder(model_config, config.train_frac, config.seed)
+        if config.trace_path
+        else None
+    )
     memorize_step: int | None = None
     grok_step: int | None = None
     final_metrics: dict[str, float] = {}
@@ -194,6 +206,8 @@ def train_grok_model(
                 )
                 for freq_idx, p_val in enumerate(power.tolist()):
                     metrics[f"freq_power/k_{freq_idx + 1}"] = p_val
+            if recorder is not None:
+                recorder.record(step, model)
             metrics.update(
                 evaluate(
                     model, train_tokens, train_targets, layer_weights, config, "train"
@@ -234,6 +248,15 @@ def train_grok_model(
             wandb.run.summary["grok_step"] = grok_step
 
     print(f"\nmemorize_step: {memorize_step}, grok_step: {grok_step}")
+    if recorder is not None and config.trace_path:
+        recorder.save(
+            Path(config.trace_path),
+            {
+                "model_config": model_config.model_dump(),
+                "training": config.model_dump(),
+                "run_name": run_name,
+            },
+        )
 
     save_model_checkpoint(
         model,
@@ -265,6 +288,7 @@ def main() -> None:
     parser.add_argument("--dim", type=int, default=128)
     parser.add_argument("--n-heads", type=int, default=4)
     parser.add_argument("--n-layers", type=int, default=2)
+    parser.add_argument("--dropout", type=float, default=0.0)
     # Data
     parser.add_argument("--train-frac", type=float, default=0.3)
     # Aux loss
@@ -313,8 +337,15 @@ def main() -> None:
     parser.add_argument("--weight-decay", type=float, default=1.0)
     parser.add_argument("--total-steps", type=int, default=30_000)
     parser.add_argument(
-        "--lr-schedule", default="constant", choices=["cosine", "constant"]
+        "--lr-schedule",
+        default="constant",
+        choices=["cosine", "constant", "step", "wsd"],
     )
+    parser.add_argument("--lr-step-at", type=int, default=20_000)
+    parser.add_argument("--lr-step-factor", type=float, default=0.1)
+    parser.add_argument("--lr-decay-start", type=int, default=20_000)
+    parser.add_argument("--lr-decay-end", type=int, default=40_000)
+    parser.add_argument("--lr-decay-floor", type=float, default=0.1)
     parser.add_argument("--warmup-steps", type=int, default=10)
     parser.add_argument("--no-compile", action="store_true")
     # Cadence / logging
@@ -343,6 +374,11 @@ def main() -> None:
         default=0,
         help="Save an intermediate checkpoint every N steps (0 = final only)",
     )
+    parser.add_argument(
+        "--trace-out",
+        default=None,
+        help="Write the per-eval capability/embedding/neuron trace here",
+    )
     parser.add_argument("--seed", type=int, default=42)
     args = parser.parse_args()
 
@@ -369,6 +405,7 @@ def main() -> None:
             dim=args.dim,
             n_heads=args.n_heads,
             n_layers=args.n_layers,
+            dropout=args.dropout,
         )
     config = GrokLensTrainingConfig(
         train_frac=args.train_frac,
@@ -383,6 +420,11 @@ def main() -> None:
         weight_decay=args.weight_decay,
         total_steps=args.total_steps,
         lr_schedule=args.lr_schedule,
+        lr_step_at=args.lr_step_at,
+        lr_step_factor=args.lr_step_factor,
+        lr_decay_start=args.lr_decay_start,
+        lr_decay_end=args.lr_decay_end,
+        lr_decay_floor=args.lr_decay_floor,
         warmup_steps=args.warmup_steps,
         compile=not args.no_compile,
         log_every_steps=args.log_every_steps,
@@ -390,6 +432,7 @@ def main() -> None:
         log_fourier=args.log_fourier,
         checkpoint_every_steps=args.checkpoint_every,
         checkpoint_dir=args.checkpoint_dir,
+        trace_path=args.trace_out,
         wandb_project=args.wandb_project,
         wandb_run_name=args.wandb_run_name,
         use_wandb=not args.no_wandb,

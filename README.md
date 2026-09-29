@@ -79,6 +79,9 @@ grok_lens/          # modular-arithmetic grokking: model, aux loss, training, an
   analyze_*.py      #   stability / FFT / knockout / layer-0 analyses
   make_figures.py   #   regenerates figures/ from wandb + checkpoints
   muon.py           #   Muon/AdamW parameter routing (optimizer-robustness arm)
+  trace.py          #   per-eval capability / embedding / neuron record (--trace-out)
+  analyze_levels.py #   share of each level that moves over a lag; collapse repairs
+  plot_levels.py    #   stability-grid figures
 lego/               # S3 multi-hop composition task (full-sequence / realistic-objective study)
   train.py          #   uv run python -m lego.train --help
   analyze_fullseq.py   # position-by-position lens/probe grid (the headline analysis)
@@ -86,6 +89,7 @@ lego/               # S3 multi-hop composition task (full-sequence / realistic-o
   compare_lens_aux.py  # lens staircase / coalescence (answer-only arms; RESULTS log)
   analyze_probes.py    # <predict>-position probes (answer-only arms; RESULTS log)
 common/             # shared config / schedule / checkpoint utilities
+workflow/, config/  # Snakemake stability grid (see below)
 scripts/            # reproduction entry points (see below)
 figures/            # pre-generated figures used in the writeup
 ```
@@ -151,6 +155,40 @@ sky launch skypilot/reproduce.yaml --infra <your-cloud> --down -y \
 The full core reproduction is roughly a GPU-day and a half on an 8 GB card —
 typically a few dollars on spot instances. Pass `--secret WANDB_API_KEY`
 to log to your own wandb.
+
+## The stability grid (Snakemake + gpuc)
+
+Asks, per architecture, whether the capability, the embedding's Fourier
+frequencies, and the MLP neurons carrying each frequency are equally stable
+after grokking. The grid (`config/config.yaml`): 1 or 2 layers × with or
+without LayerNorm, the aux loss on the 2-layer cells, and two other
+stabilizers on the unstable 2-layer LayerNorm cell (dropout, a post-grok LR
+drop); 3 seeds × 50k steps each. Every run writes a per-eval trace
+(`grok_lens/trace.py`), which `analyze_levels` turns into "share moved vs
+lag" curves on one scale for all three levels, plus a before/after
+comparison for every post-grok collapse.
+
+The controller runs on the GPU machine and submits each training run as a
+[gpuc](https://github.com/brendanlong/gpu-coordinator) job; analyses and
+figures run on the controller. Run it in tmux:
+
+```bash
+uv run --with "gpu-coordinator @ git+https://github.com/brendanlong/gpu-coordinator" \
+  snakemake --workflow-profile workflow/profiles/gpuc \
+  --config results_dir=/abs/path/outside/the/repo
+# pipeline check first: add --configfile config/smoke.yaml (2k steps, 1 seed)
+# before --config, pointing results_dir somewhere else
+```
+
+`results_dir` must be absolute: each gpuc job runs in its own copy of the
+repo, and the controller has to see what the job wrote. Without gpuc,
+`uv run snakemake --cores 1 --config results_dir=...` runs everything
+locally. Each rule
+lists the source modules it imports as inputs, so editing a module reruns
+exactly the steps that depend on it (Snakemake compares small files by
+content, so a touched-but-unchanged file doesn't trigger a rerun); editing
+`config/config.yaml` reruns what its values feed. The environment is the
+uv lockfile rather than per-rule conda envs.
 
 ## Provenance
 
