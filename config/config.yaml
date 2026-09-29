@@ -39,9 +39,14 @@ cells:
   L2-ln-lrdrop:
     label: 2 layers, LayerNorm, LR ×0.1 at 20k
     args: --n-layers 2 --lr-schedule step --lr-step-at 20000 --lr-step-factor 0.1
+  L2-ln-anneal:
+    label: 2 layers, LayerNorm, LR annealed 20k→40k
+    args: --n-layers 2 --lr-schedule wsd --lr-decay-start 20000 --lr-decay-end 40000 --lr-decay-floor 0.1
+    # lag curves only over the flat tail, not the moving LR
+    window_start: 40000
 
 # Panel layout for the grid figures (rows of cell names).
 figure_rows:
   - [L1-ln, L2-ln, L2-ln-aux]
   - [L1-noln, L2-noln, L2-noln-aux]
-  - [L2-ln-dropout, L2-ln-lrdrop]
+  - [L2-ln-dropout, L2-ln-lrdrop, L2-ln-anneal]

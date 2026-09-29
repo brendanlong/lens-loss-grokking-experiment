@@ -7,7 +7,7 @@ rule analyze:
     log:
         RESULTS / "logs/analyze/{cell}/s{seed}.log",
     params:
-        window_start=config["window_start"],
+        window_start=lambda wc: window_start(wc.cell),
         lags=" ".join(map(str, config["lags"])),
     shell:
         "uv run --no-sync python -m grok_lens.analyze_levels {input.trace}"
@@ -31,9 +31,9 @@ rule figures:
             "--label " + shlex.quote(f"{c}={v['label']}")
             for c, v in config["cells"].items()
         ),
-        window_start=config["window_start"],
+        windows=" ".join(f"--window {c}={window_start(c)}" for c in CELLS),
     shell:
         "uv run --no-sync python -m grok_lens.plot_levels --out {params.out}"
         " --summaries {input.summaries} --traces {input.traces}"
-        " {params.rows} {params.labels} --window-start {params.window_start}"
+        " {params.rows} {params.labels} {params.windows}"
         " > {log} 2>&1"

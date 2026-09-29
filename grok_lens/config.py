@@ -112,13 +112,19 @@ class GrokLensTrainingConfig(BaseTrainingConfig):
     # regularization pressure (load-bearing for grokking) wouldn't be
     # comparable across optimizer arms.
     muon_weight_decay: float = 0.05
-    lr_schedule: Literal["cosine", "constant", "step"] = "constant"  # pyright: ignore[reportIncompatibleVariableOverride]
+    lr_schedule: Literal["cosine", "constant", "step", "wsd"] = "constant"  # pyright: ignore[reportIncompatibleVariableOverride]
     # "step": constant, then lr * lr_step_factor from lr_step_at on. A
     # stationary post-grok LR drop (unlike cosine, which keeps moving through
     # any analysis window). AdamW's decoupled decay scales with lr, so this
     # lowers weight-decay pressure by the same factor.
     lr_step_at: int = 20_000
     lr_step_factor: float = 0.1
+    # "wsd" (warmup-stable-decay): constant, then linear decay to
+    # lr * lr_decay_floor between lr_decay_start and lr_decay_end, then flat.
+    # The realistic-annealing arm; the same weight-decay caveat applies.
+    lr_decay_start: int = 20_000
+    lr_decay_end: int = 40_000
+    lr_decay_floor: float = 0.1
     warmup_steps: int = 10
     total_steps: int = 30_000
     # No gradient clipping (inf disables it): the canonical grokking setup

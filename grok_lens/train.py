@@ -51,6 +51,10 @@ def build_lr_lambda(config: GrokLensTrainingConfig) -> Callable[[int], float]:
             return 1.0
         if config.lr_schedule == "step":
             return config.lr_step_factor if step >= config.lr_step_at else 1.0
+        if config.lr_schedule == "wsd":
+            span = max(1, config.lr_decay_end - config.lr_decay_start)
+            done = min(max(step - config.lr_decay_start, 0) / span, 1.0)
+            return 1.0 - done * (1.0 - config.lr_decay_floor)
         progress = (step - config.warmup_steps) / max(
             1, config.total_steps - config.warmup_steps
         )
@@ -333,10 +337,15 @@ def main() -> None:
     parser.add_argument("--weight-decay", type=float, default=1.0)
     parser.add_argument("--total-steps", type=int, default=30_000)
     parser.add_argument(
-        "--lr-schedule", default="constant", choices=["cosine", "constant", "step"]
+        "--lr-schedule",
+        default="constant",
+        choices=["cosine", "constant", "step", "wsd"],
     )
     parser.add_argument("--lr-step-at", type=int, default=20_000)
     parser.add_argument("--lr-step-factor", type=float, default=0.1)
+    parser.add_argument("--lr-decay-start", type=int, default=20_000)
+    parser.add_argument("--lr-decay-end", type=int, default=40_000)
+    parser.add_argument("--lr-decay-floor", type=float, default=0.1)
     parser.add_argument("--warmup-steps", type=int, default=10)
     parser.add_argument("--no-compile", action="store_true")
     # Cadence / logging
@@ -413,6 +422,9 @@ def main() -> None:
         lr_schedule=args.lr_schedule,
         lr_step_at=args.lr_step_at,
         lr_step_factor=args.lr_step_factor,
+        lr_decay_start=args.lr_decay_start,
+        lr_decay_end=args.lr_decay_end,
+        lr_decay_floor=args.lr_decay_floor,
         warmup_steps=args.warmup_steps,
         compile=not args.no_compile,
         log_every_steps=args.log_every_steps,

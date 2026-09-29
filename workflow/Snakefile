@@ -15,6 +15,12 @@ validate(config, "schemas/config.schema.yaml")
 RESULTS = Path(config["results_dir"])
 CELLS = list(config["cells"])
 SEEDS = config["seeds"]
+
+
+def window_start(cell):
+    return config["cells"][cell].get("window_start", config["window_start"])
+
+
 FIGURES = ["levels_by_lag", "test_loss", "repairs", *(f"detail_{c}" for c in CELLS)]
 
 unknown = {c for row in config["figure_rows"] for c in row} - set(CELLS)

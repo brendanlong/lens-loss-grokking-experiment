@@ -127,7 +127,7 @@ def plot_test_loss(
     traces: dict[str, dict[int, Path]],
     rows: list[list[str]],
     labels: dict[str, str],
-    window_start: int,
+    windows: dict[str, int],
     out: Path,
 ) -> None:
     fig, axes = grid(rows, width=3.0, height=2.0)
@@ -137,7 +137,7 @@ def plot_test_loss(
             trace = load_trace(path)
             loss = trace["test_loss"].float().mean(1)
             ax.plot(trace["steps"], loss, color=INK, lw=0.6, alpha=0.6)
-        ax.axvline(window_start, color=MUTED, lw=0.6, ls=":")
+        ax.axvline(windows[cell], color=MUTED, lw=0.6, ls=":")
         ax.set_yscale("log")
     axes[rows[0][0]].set_ylabel("test loss", fontsize=8, color=MUTED)
     for row in rows:
@@ -259,12 +259,15 @@ def main() -> None:
     parser.add_argument("--traces", type=Path, nargs="+", required=True)
     parser.add_argument("--row", action="append", required=True)
     parser.add_argument("--label", action="append", default=[])
-    parser.add_argument("--window-start", type=int, default=30_000)
+    parser.add_argument(
+        "--window", action="append", default=[], help="cell=analysis window start"
+    )
     parser.add_argument("--detail-seed", type=int, default=42)
     args = parser.parse_args()
 
     rows = [r.split(",") for r in args.row]
     labels = dict(lbl.split("=", 1) for lbl in args.label)
+    windows = {c: int(w) for c, w in (x.split("=", 1) for x in args.window)}
     summaries: dict[str, dict[int, dict]] = defaultdict(dict)
     for path in args.summaries:
         cell, seed = cell_seed(path)
@@ -276,14 +279,14 @@ def main() -> None:
 
     args.out.mkdir(parents=True, exist_ok=True)
     plot_lag_curves(summaries, rows, labels, args.out / "levels_by_lag.png")
-    plot_test_loss(traces, rows, labels, args.window_start, args.out / "test_loss.png")
+    plot_test_loss(traces, rows, labels, windows, args.out / "test_loss.png")
     plot_repairs(summaries, labels, args.out / "repairs.png")
     for cell, by_seed in traces.items():
         seed = args.detail_seed if args.detail_seed in by_seed else min(by_seed)
         plot_run_detail(
             by_seed[seed],
             f"{labels.get(cell, cell)} — seed {seed}",
-            args.window_start,
+            windows[cell],
             args.out / f"detail_{cell}.png",
         )
 
