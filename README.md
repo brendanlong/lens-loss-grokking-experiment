@@ -180,6 +180,11 @@ uv run --with "gpu-coordinator @ git+https://github.com/brendanlong/gpu-coordina
 # before --config, pointing results_dir somewhere else
 ```
 
+The published grid's full results (traces, checkpoints every 1k steps,
+summaries, logs; 8.7 GB) are in
+`s3://brendanlong-experiments/grok_lens/stability-grid/`; sync them into a
+`results_dir` to rerun analyses without retraining.
+
 `results_dir` must be absolute: each gpuc job runs in its own copy of the
 repo, and the controller has to see what the job wrote. Without gpuc,
 `uv run snakemake --cores 1 --config results_dir=...` runs everything
