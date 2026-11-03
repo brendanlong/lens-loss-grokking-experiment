@@ -40,6 +40,7 @@ ignore = []
 
 [tool.ruff.lint.per-file-ignores]
 "**/tests/*" = ["ANN"]
+"report/*" = ["E501", "RUF001", "ANN"]  # HTML-building page script
 
 [tool.pyright]
 pythonVersion = "3.12"
