@@ -37,3 +37,36 @@ rule figures:
         " --summaries {input.summaries} --traces {input.traces}"
         " {params.rows} {params.labels} {params.windows}"
         " > {log} 2>&1"
+
+
+rule analyze_weights:
+    input:
+        checkpoints=rules.train.output.checkpoints,
+        code=WEIGHTS_CODE,
+    output:
+        RESULTS / "weights/{cell}/s{seed}.json",
+    log:
+        RESULTS / "logs/analyze_weights/{cell}/s{seed}.log",
+    params:
+        window_start=lambda wc: window_start(wc.cell),
+        lags=" ".join(map(str, config["weight_lags"])),
+    shell:
+        "uv run --no-sync python -m grok_lens.analyze_weights {input.checkpoints}"
+        " --out {output} --window-start {params.window_start}"
+        " --lags {params.lags} > {log} 2>&1"
+
+
+rule weight_figure:
+    input:
+        summaries=per_run(rules.analyze_weights.output[0]),
+        code=WEIGHTS_PLOT_CODE,
+    output:
+        RESULTS / "figures/weights_by_lag.png",
+    log:
+        RESULTS / "logs/weight_figure.log",
+    params:
+        rows=rules.figures.params.rows,
+        labels=rules.figures.params.labels,
+    shell:
+        "uv run --no-sync python -m grok_lens.plot_weights --out {output}"
+        " --summaries {input.summaries} {params.rows} {params.labels} > {log} 2>&1"

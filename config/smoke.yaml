@@ -6,3 +6,4 @@ checkpoint_every: 500
 wandb: false
 window_start: 500
 lags: [100, 500, 1000]
+weight_lags: [500, 1000]

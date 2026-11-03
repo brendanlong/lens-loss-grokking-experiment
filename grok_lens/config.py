@@ -125,6 +125,10 @@ class GrokLensTrainingConfig(BaseTrainingConfig):
     lr_decay_start: int = 20_000
     lr_decay_end: int = 40_000
     lr_decay_floor: float = 0.1
+    # Raise AdamW's weight decay as the post-warmup schedule lowers the LR,
+    # so the per-step decay lr * weight_decay stays fixed. Separates "less
+    # churn" from "less pruning" in the annealing arms.
+    hold_decay_rate: bool = False
     warmup_steps: int = 10
     total_steps: int = 30_000
     # No gradient clipping (inf disables it): the canonical grokking setup
@@ -163,6 +167,9 @@ class GrokLensTrainingConfig(BaseTrainingConfig):
     def _validate(self) -> "GrokLensTrainingConfig":
         if not 0.0 < self.train_frac < 1.0:
             msg = f"train_frac must be in (0, 1), got {self.train_frac}"
+            raise ValueError(msg)
+        if self.hold_decay_rate and self.optimizer != "adamw":
+            msg = "hold_decay_rate is only implemented for AdamW"
             raise ValueError(msg)
         if self.aux_lambda < 0.0:
             msg = f"aux_lambda must be >= 0, got {self.aux_lambda}"

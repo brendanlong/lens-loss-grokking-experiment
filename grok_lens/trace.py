@@ -83,14 +83,19 @@ def pair_frequency_profiles(acts: torch.Tensor, p: int) -> torch.Tensor:
     equal to ±k: a-only, b-only and joint terms alike. A component mixing
     two different frequencies counts towards both. Rows are L1-normalised.
     """
+    power = pair_frequency_power(acts, p)
+    return power / power.sum(-1, keepdim=True).clamp_min(1e-12)
+
+
+def pair_frequency_power(acts: torch.Tensor, p: int) -> torch.Tensor:
+    """Unnormalised [..., n, K] power behind :func:`pair_frequency_profiles`."""
     grid = acts.reshape(*acts.shape[:-2], p, p, acts.shape[-1])
     spec = torch.fft.fft2(grid, dim=(-3, -2)).abs().pow(2).flatten(-3, -2)
     idx = torch.arange(p, device=acts.device)
     fold = torch.minimum(idx, p - idx)
     ks = torch.arange(1, (p - 1) // 2 + 1, device=acts.device)
     involves = (fold[:, None, None] == ks) | (fold[None, :, None] == ks)
-    power = torch.einsum("...fn,fk->...nk", spec, involves.flatten(0, 1).float())
-    return power / power.sum(-1, keepdim=True).clamp_min(1e-12)
+    return torch.einsum("...fn,fk->...nk", spec, involves.flatten(0, 1).float())
 
 
 class TraceRecorder:

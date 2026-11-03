@@ -134,8 +134,9 @@ def train_grok_model(
         ]
     else:
         optimizers = [make_adamw(list(model.parameters()))]
+    lr_lambda = build_lr_lambda(config)
     schedulers = [
-        torch.optim.lr_scheduler.LambdaLR(opt, lr_lambda=build_lr_lambda(config))
+        torch.optim.lr_scheduler.LambdaLR(opt, lr_lambda=lr_lambda)
         for opt in optimizers
     ]
 
@@ -170,6 +171,9 @@ def train_grok_model(
             optimizer.step()
         for scheduler in schedulers:
             scheduler.step()
+        if config.hold_decay_rate and step >= config.warmup_steps:
+            for group in optimizers[0].param_groups:
+                group["weight_decay"] = config.weight_decay / lr_lambda(step)
 
         every = config.checkpoint_every_steps
         if every and step % every == 0:
@@ -194,6 +198,7 @@ def train_grok_model(
             "train/aux_loss": (total - final_ce).item(),
             "train/total_loss": total.item(),
             "lr": schedulers[-1].get_last_lr()[0],
+            "weight_decay": optimizers[-1].param_groups[0]["weight_decay"],
         }
         if do_eval:
             model.eval()
@@ -346,6 +351,11 @@ def main() -> None:
     parser.add_argument("--lr-decay-start", type=int, default=20_000)
     parser.add_argument("--lr-decay-end", type=int, default=40_000)
     parser.add_argument("--lr-decay-floor", type=float, default=0.1)
+    parser.add_argument(
+        "--hold-decay-rate",
+        action="store_true",
+        help="Raise weight decay as the LR falls, keeping lr * weight_decay fixed",
+    )
     parser.add_argument("--warmup-steps", type=int, default=10)
     parser.add_argument("--no-compile", action="store_true")
     # Cadence / logging
@@ -425,6 +435,7 @@ def main() -> None:
         lr_decay_start=args.lr_decay_start,
         lr_decay_end=args.lr_decay_end,
         lr_decay_floor=args.lr_decay_floor,
+        hold_decay_rate=args.hold_decay_rate,
         warmup_steps=args.warmup_steps,
         compile=not args.no_compile,
         log_every_steps=args.log_every_steps,

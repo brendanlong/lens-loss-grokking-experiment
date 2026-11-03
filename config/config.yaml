@@ -13,11 +13,15 @@ wandb: true
 # summaries).
 window_start: 30000
 lags: [100, 200, 500, 1000, 2000, 5000, 10000, 15000, 19900]
+# from checkpoints, which are every checkpoint_every steps
+weight_lags: [1000, 2000, 5000, 10000, 15000]
 
 cells:
   L1-ln:
     label: 1 layer, LayerNorm
     args: --n-layers 1
+    # is "1 layer barely collapses" real?
+    extra_seeds: [45, 46, 47, 48, 49, 50, 51]
   L2-ln:
     label: 2 layers, LayerNorm
     args: --n-layers 2
@@ -26,6 +30,11 @@ cells:
   L2-ln-aux:
     label: 2 layers, LayerNorm, aux loss
     args: --n-layers 2 --aux-lambda 0.3
+    # match the anneal arm's seed count
+    extra_seeds: [45, 46, 47, 48, 49, 50, 51]
+  L3-ln:
+    label: 3 layers, LayerNorm
+    args: --n-layers 3
   L1-noln:
     label: 1 layer, no LayerNorm (Nanda)
     args: --n-layers 1 --no-layernorm
@@ -47,9 +56,16 @@ cells:
     # lag curves only over the flat tail, not the moving LR
     window_start: 40000
     extra_seeds: [45, 46, 47, 48, 49, 50, 51]
+  L2-ln-anneal-heldwd:
+    label: 2 layers, LayerNorm, LR annealed, LR × weight decay held
+    # weight decay rises as the LR falls: separates "less churn" from
+    # "less pruning" in the anneal's stabilization
+    args: --n-layers 2 --lr-schedule wsd --lr-decay-start 20000 --lr-decay-end 40000 --lr-decay-floor 0.1 --hold-decay-rate
+    window_start: 40000
+    extra_seeds: [45, 46, 47, 48, 49, 50, 51]
 
 # Panel layout for the grid figures (rows of cell names).
 figure_rows:
-  - [L1-ln, L2-ln, L2-ln-aux]
+  - [L1-ln, L2-ln, L3-ln, L2-ln-aux]
   - [L1-noln, L2-noln, L2-noln-aux]
-  - [L2-ln-dropout, L2-ln-lrdrop, L2-ln-anneal]
+  - [L2-ln-dropout, L2-ln-lrdrop, L2-ln-anneal, L2-ln-anneal-heldwd]
