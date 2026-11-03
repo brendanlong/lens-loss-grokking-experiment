@@ -27,6 +27,7 @@ RENDER = Path.home() / (
     "skills/html-doc/scripts/render.py"
 )
 SURGE_DOMAIN = "grokking-stability-3f9c1a7e.surge.sh"
+LION_READER_ARTICLE = "01a1a2ec-c8bc-7d08-a7a3-551129b92f4e"  # in Research Results
 
 LABELS = {
     "L1-noln": "1 layer, no LayerNorm (Nanda)",
