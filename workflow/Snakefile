@@ -66,6 +66,14 @@ COMMON_CODE = [
 TRAIN_CODE = COMMON_CODE + ["grok_lens/train.py", "grok_lens/muon.py"]
 ANALYZE_CODE = ["grok_lens/__init__.py", "grok_lens/analyze_levels.py"]
 PLOT_CODE = ANALYZE_CODE + ["grok_lens/plot_levels.py"]
+WEIGHTS_CODE = COMMON_CODE + [
+    "grok_lens/analyze_levels.py",
+    "grok_lens/analyze_weights.py",
+]
+WEIGHTS_PLOT_CODE = PLOT_CODE + [
+    "grok_lens/analyze_weights.py",
+    "grok_lens/plot_weights.py",
+]
 
 
 include: "rules/train.smk"
@@ -75,3 +83,4 @@ include: "rules/analyze.smk"
 rule all:
     input:
         rules.figures.output,
+        rules.weight_figure.output,
