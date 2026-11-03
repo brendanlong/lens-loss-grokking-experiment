@@ -30,12 +30,13 @@ class Block(nn.Module):
             nn.ReLU(),
             nn.Linear(config.mlp_ratio * config.dim, config.dim),
         )
+        self.dropout = nn.Dropout(config.dropout)
 
     def forward(self, x: torch.Tensor, attn_mask: torch.Tensor) -> torch.Tensor:
         h = self.ln1(x)
         attn_out, _ = self.attn(h, h, h, attn_mask=attn_mask, need_weights=False)
-        x = x + attn_out
-        return x + self.mlp(self.ln2(x))
+        x = x + self.dropout(attn_out)
+        return x + self.dropout(self.mlp(self.ln2(x)))
 
 
 class GrokTransformer(nn.Module):

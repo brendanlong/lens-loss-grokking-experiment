@@ -1,0 +1,4 @@
+executor: gpuc
+gpuc-host: local
+jobs: 30
+envvars: [WANDB_API_KEY]

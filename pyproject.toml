@@ -16,6 +16,8 @@ dev = [
     "pyright>=1.1",
     "ruff>=0.9",
     "pytest>=8.0",
+    "snakemake>=9.27.0",
+    "snakefmt>=2.0.3",
 ]
 
 [tool.ruff]
