@@ -181,7 +181,7 @@ uv run --with "gpu-coordinator @ git+https://github.com/brendanlong/gpu-coordina
 ```
 
 The published grid's full results (traces, checkpoints every 1k steps,
-summaries, logs; 8.7 GB) are in
+summaries, logs; 14.5 GB) are in
 `s3://brendanlong-experiments/grok_lens/stability-grid/`; sync them into a
 `results_dir` to rerun analyses without retraining.
 
