@@ -3,7 +3,12 @@ import re
 import pytest
 import torch
 
-from grok_lens.analyze_weights import head_outputs, heads_moved, weight_moved
+from grok_lens.analyze_weights import (
+    checkpoint_paths,
+    head_outputs,
+    heads_moved,
+    weight_moved,
+)
 from grok_lens.config import GrokModelConfig
 from grok_lens.data import modular_addition_data
 from grok_lens.model import Block, GrokTransformer
@@ -39,10 +44,21 @@ def test_weight_moved_is_zero_for_same_and_about_one_for_unrelated() -> None:
     assert weight_moved(a, b, pattern) == pytest.approx(1.0, abs=0.05)
 
 
-def test_heads_moved_is_zero_for_unchanged_and_one_for_swapped_roles() -> None:
-    profiles = torch.eye(4)[None].repeat(2, 1, 1)
-    assert heads_moved(profiles, 0, 1) == pytest.approx(0.0)
+def test_heads_moved_is_zero_for_unchanged_and_large_for_swapped_roles() -> None:
+    # four heads sharing one dominant frequency, each with its own minor one
+    profiles = torch.full((2, 4, 5), 0.0)
+    profiles[:, :, 0] = 10.0
+    for h in range(4):
+        profiles[:, h, h + 1] = 1.0
+    assert heads_moved(profiles, 0, 1) == pytest.approx((0.0, 0.0), abs=1e-6)
     profiles[1] = profiles[1].roll(1, 0)
-    # swapping to another head's role is beyond chance: different heads here
-    # are orthogonal, so chance is cosine 0 and a swap scores 1
-    assert heads_moved(profiles, 0, 1) == pytest.approx(1.0)
+    corrected, raw = heads_moved(profiles, 0, 1)
+    assert raw < 0.05  # raw profiles barely change: the shared frequency dominates
+    assert corrected > 1.0  # but each head now has another head's distinct role
+
+
+def test_checkpoint_paths_skip_final_duplicate(tmp_path) -> None:
+    for name in ("step_1000.pt", "step_2000.pt", "step_3000.pt", "final.pt"):
+        (tmp_path / name).touch()
+    names = [p.name for p in checkpoint_paths(tmp_path, since=2000)]
+    assert names == ["step_2000.pt", "step_3000.pt"]

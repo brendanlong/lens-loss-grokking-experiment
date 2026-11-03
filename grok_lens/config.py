@@ -171,6 +171,13 @@ class GrokLensTrainingConfig(BaseTrainingConfig):
         if self.hold_decay_rate and self.optimizer != "adamw":
             msg = "hold_decay_rate is only implemented for AdamW"
             raise ValueError(msg)
+        if self.hold_decay_rate and (
+            self.lr_schedule == "cosine"
+            or (self.lr_schedule == "wsd" and self.lr_decay_floor <= 0)
+            or (self.lr_schedule == "step" and self.lr_step_factor <= 0)
+        ):
+            msg = "hold_decay_rate needs an LR schedule that never reaches 0"
+            raise ValueError(msg)
         if self.aux_lambda < 0.0:
             msg = f"aux_lambda must be >= 0, got {self.aux_lambda}"
             raise ValueError(msg)

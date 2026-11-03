@@ -6,16 +6,22 @@ the rest of the network, on the same "1 = no more alike than unrelated" scale:
   - raw weights: for each group of matrices (embedding, attention, MLP,
     unembedding), ||W_t - W_t'||² / (||W_t||² + ||W_t'||²) summed over the
     group. 0 = identical, 1 = what two independent matrices give in
-    expectation. Not invariant to re-expressing the residual stream in a
-    rotated basis: a rotated residual stream with the same mechanism would
-    still score high here. That is the honest answer to "are the same weights
-    doing the work", but not to "is the same mechanism doing the work".
+    expectation; uniform shrinkage barely registers ((1-c)²/(1+c²), 0.006
+    for a 10% shrink). Not invariant to changes that leave the function
+    alone: rotating the residual-stream basis, trading scale between Q and K,
+    mixing V and O within a head, or trading scale between ``ln_f``'s gain
+    (not in any group, nor are biases and positions) and the unembedding all
+    count as movement. That is the honest answer to "are the same weights
+    doing the work", not to "is the same mechanism doing the work".
   - attention heads: each head's frequency profile — the 2-D (a, b) Fourier
-    power of its output at the answer position, summed over output
-    dimensions, which no change of residual basis affects. Head identity is
-    fixed by the architecture, so a head can be compared with its own past:
-    moved = (1 - own cosine) / (1 - cosine between different heads at the
-    same time).
+    power share of its output at the answer position, summed over output
+    dimensions, which no change of residual basis affects. Heads often share
+    frequencies, which makes any two heads' raw profiles nearly parallel, so
+    each head is described by how it differs from the average head at that
+    time. Head identity is fixed by the architecture, so a head can be
+    compared with its own past: moved = (1 - own cosine) / (1 - cosine
+    between different heads), on the centred profiles. ``heads_raw`` is
+    1 - own cosine of the uncentred shares, with no chance correction.
   - unembedding: the per-frequency power of the number tokens' unembedding
     rows, chance-corrected like the embedding in ``analyze_levels``.
 
@@ -26,6 +32,7 @@ Usage:
 import argparse
 import json
 import re
+from itertools import pairwise
 from pathlib import Path
 from typing import cast
 
@@ -46,7 +53,6 @@ GROUPS = {
     "unembedding": re.compile(r"^unembed\.weight$"),
 }
 WEIGHT_LEVELS = (*GROUPS, "heads", "unembed_spectrum")
-MIN_CHANCE_GAP = 0.05  # below this, heads are too alike for a chance level
 
 
 def load(path: Path) -> tuple[GrokTransformer, GrokModelConfig, int]:
@@ -117,24 +123,32 @@ def weight_moved(
     return diff / scale
 
 
-def heads_moved(profiles: torch.Tensor, i: int, j: int) -> float | None:
-    """``profiles`` [T, heads, K]; own-head change over chance, between t=i, j."""
-    own = F.cosine_similarity(profiles[i], profiles[j], dim=-1).mean()
-    now = F.normalize(profiles[i], dim=-1)
-    sims = now @ now.T
-    n = len(now)
+def heads_moved(profiles: torch.Tensor, i: int, j: int) -> tuple[float, float]:
+    """(chance-corrected, raw) own-head role change between t=i and t=j.
+
+    ``profiles`` [T, heads, K] of power. See the module docstring.
+    """
+    shares = profiles / profiles.sum(-1, keepdim=True).clamp_min(1e-12)
+    raw = 1 - F.cosine_similarity(shares[i], shares[j], dim=-1).mean()
+    a, b = (shares[t] - shares[t].mean(0, keepdim=True) for t in (i, j))
+    own = F.cosine_similarity(a, b, dim=-1).mean()
+    sims = F.normalize(a, dim=-1) @ F.normalize(b, dim=-1).T
+    n = len(a)
     chance = (sims.sum() - sims.diagonal().sum()) / (n * (n - 1))
-    if 1 - chance < MIN_CHANCE_GAP:
-        return None
-    return float((1 - own) / (1 - chance))
+    return float((1 - own) / (1 - chance)), float(raw)
 
 
 def checkpoint_paths(directory: Path, since: int) -> list[Path]:
-    def step(path: Path) -> int:
-        found = re.findall(r"step_(\d+)", path.name)
-        return int(found[0]) if found else 10**9  # final.pt is last
+    """Intermediate checkpoints from ``since`` on, in step order.
 
-    return [p for p in sorted(directory.glob("*.pt"), key=step) if step(p) >= since]
+    ``final.pt`` duplicates the last ``step_<total>.pt``, so it is left out.
+    """
+
+    def step(path: Path) -> int:
+        return int(re.findall(r"step_(\d+)", path.name)[0])
+
+    paths = sorted(directory.glob("step_*.pt"), key=step)
+    return [p for p in paths if step(p) >= since]
 
 
 def summarize(directory: Path, window_start: int, lags: list[int]) -> dict:
@@ -151,6 +165,8 @@ def summarize(directory: Path, window_start: int, lags: list[int]) -> dict:
     profiles = torch.stack(head_profiles)
     unembed = torch.stack(unembed_power)
     cadence = steps[1] - steps[0]
+    if any(b - a != cadence for a, b in pairwise(steps)):
+        raise SystemExit(f"checkpoints in {directory} are not evenly spaced: {steps}")
 
     curve = []
     for lag_steps in lags:
@@ -163,17 +179,26 @@ def summarize(directory: Path, window_start: int, lags: list[int]) -> dict:
             point[name] = sum(
                 weight_moved(states[i], states[j], pattern) for i, j in pairs
             ) / len(pairs)
-        head_values = [
-            v
-            for i, j in pairs
-            if (v := heads_moved(profiles, int(i), int(j))) is not None
-        ]
-        point["heads"] = sum(head_values) / len(head_values) if head_values else None
+        heads = [heads_moved(profiles, int(i), int(j)) for i, j in pairs]
+        point["heads"] = sum(h[0] for h in heads) / len(heads)
+        point["heads_raw"] = sum(h[1] for h in heads) / len(heads)
         point["unembed_spectrum"] = embedding_moved(
             unembed, lag_pairs(len(steps), lag)
         )[0]
         curve.append(point)
-    return {"steps": [steps[0], steps[-1]], "cadence": cadence, "curve": curve}
+    norms = {
+        name: [
+            sum(float(st[k].pow(2).sum()) for k in st if pattern.match(k)) ** 0.5
+            for st in states
+        ]
+        for name, pattern in GROUPS.items()
+    }
+    return {
+        "steps": steps,
+        "cadence": cadence,
+        "curve": curve,
+        "weight_norms": norms,
+    }
 
 
 def main() -> None:
