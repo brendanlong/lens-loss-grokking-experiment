@@ -57,7 +57,7 @@ cells:
     window_start: 40000
     extra_seeds: [45, 46, 47, 48, 49, 50, 51]
   L2-ln-anneal-heldwd:
-    label: 2 layers, LayerNorm, LR annealed, LR × weight decay held
+    label: 2 layers, LN, annealed, decay rate held
     # weight decay rises as the LR falls: separates "less churn" from
     # "less pruning" in the anneal's stabilization
     args: --n-layers 2 --lr-schedule wsd --lr-decay-start 20000 --lr-decay-end 40000 --lr-decay-floor 0.1 --hold-decay-rate
